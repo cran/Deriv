@@ -1,15 +1,20 @@
 Package: Deriv
 Type: Package
 Title: Symbolic Differentiation
-Version: 1.0
-Date: 2014-12-10
-Author: Andrew Clausen
-Maintainer: Serguei Sokol <sokol@insa-toulouse.fr>
-Description: Compared to R functions deriv() and D(), Deriv() admits user-defined
-    function for derivation as well as function substitution in arguments of
-    functions to be derived.
+Version: 2.0
+Date: 2015-02-05
+Authors@R: c(person(given="Andrew", family="Clausen", role="aut"),
+    person(given="Serguei", family="Sokol", role=c("aut", "cre"),
+    email="sokol@insa-toulouse.fr"))
+Description: Compared to R functions deriv() and D(), Deriv() admits
+    user-defined function as well as function substitution
+    in arguments of functions to be differentiated.
 License: GPL (>= 3)
-Packaged: 2014-12-23 15:54:00 UTC; sokol
+Suggests: testthat
+Packaged: 2015-02-05 16:36:37 UTC; sokol
+Author: Andrew Clausen [aut],
+  Serguei Sokol [aut, cre]
+Maintainer: Serguei Sokol <sokol@insa-toulouse.fr>
 NeedsCompilation: no
 Repository: CRAN
-Date/Publication: 2014-12-23 18:07:14
+Date/Publication: 2015-02-05 18:51:36
