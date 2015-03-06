@@ -46,3 +46,9 @@ test_that("abs simplifications", {
    expect_equal_lang(abs(a), abs(a)) # no change must occur
    expect_equal_lang(abs(a*a), a^2)
 })
+test_that("factorizations", {
+   expect_equal_lang(a+b, a+b) # no change must occur
+   expect_equal_lang(a*a+b*a, a*(a+b))
+   expect_equal_lang(a^2+b*a^3, a^2*(1+a*b))
+   expect_equal_lang(a^2/c**5+b*a^3/d/c**3, a^2*(1/c^2+a*b/d)/c^3)
+})

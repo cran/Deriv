@@ -3,11 +3,26 @@ Deriv
 
 Symbollic differentiation
 -------------------------
-This software is written in R by Andrew Clausen (clausen at econ.upenn.edu) in 2007.
+The original version of this software was written in R by Andrew Clausen (clausen at econ.upenn.edu) in 2007.
 
-Thanks to Mark Reid (mark.reid at anu.edu.au) for a patch, applied 21/2/2009.
+Mark Reid (mark.reid at anu.edu.au) sent a patch, applied 21/2/2009.
 
-In 2014, Andrew has passed the maintenance to Serguei Sokol (sokol at insa-toulouse.fr).
+In 2014, Andrew has passed the maintenance to Serguei Sokol (sokol at insa-toulouse.fr). Since then, the software was deeply rewritten and
+completed.
+
+Main new features include:
+ - new derivative engine allowing simple syntaxe for differentiation rules;
+ - automatic derivation of code with multiple assignement operators;
+ - many new functions are added to rule table;
+ - possible simplifications are extended to rational expressions and factorizations. Expression caching is enabled by default;
+ - Deriv() is made the only entry point for all types of entries:
+   * expression
+   * language
+   * function
+   * right hand side of a formula
+   * character string
+   * plain unevaluated code
+ - few unit tests were added to the package
 
 Installation
 ------------

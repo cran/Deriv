@@ -4,8 +4,9 @@
 \alias{drule}
 \title{Symbollic differentiation of an expression or function}
 \usage{
-Deriv(f, x = if (is.function(f)) names(formals(f)) else NA, env = if
-  (is.function(f)) environment(f) else parent.frame())
+Deriv(f, x = if (is.function(f)) names(formals(f)) else all.vars(if
+  (is.character(f)) parse(text = f) else f), env = if (is.function(f))
+  environment(f) else parent.frame(), use.D = FALSE, cache.exp = TRUE)
 }
 \arguments{
 \item{f}{An expression or function to be differentiated.
@@ -18,17 +19,24 @@ f can be \itemize{
  \item a right hand side of a formula: \code{~ x**n} or \code{y ~ x**n}
 }}
 
-\item{x}{A character string with variable name(s) with resptect to which
-\code{f} must be differentiated. If \code{f} is a function \code{x} is
-optional andis set to \code{names(formals(f))}. If f is a primitive
-function, x is set to c("x" [, "y"[, "z"]]) depending on the maximal
-number of allowed arguments in drule table. For functions with
-unlimited number of arguments, like sum(), three names are used:
-"x", "y" and "z".}
+\item{x}{An optiona character vector with variable name(s) with resptect to which
+\code{f} must be differentiated. If not provided, x is guessed from
+\code{names(formals(f))}, if \code{f} is a function, or from all variables in f
+in other cases. If f is a primitive
+function, x is set to \code{names(formals(args(f)))}}
 
 \item{env}{An environment where the symbols and functions are searched for.
 Defaults to \code{parent.frame()} for \code{f} expression and to
-\code{environment(f)} if \code{f} is a function.}
+\code{environment(f)} if \code{f} is a function. For primitive function,
+it is set by default to .GlobalEnv}
+
+\item{use.D}{An optional logical (default FALSE), indicates if base::D()
+must be used for differentiation of basic expressions.}
+
+\item{cache.exp}{An optional logical (default TRUE), indicates if
+ final expression must be optimized with cached subexpressions.
+ If enabled, repeated calculations are made only once and their
+ results stored in cache variables which are then reused.}
 }
 \value{
 \itemize{
@@ -42,10 +50,11 @@ Defaults to \code{parent.frame()} for \code{f} expression and to
 Symbollic differentiation of an expression or function
 }
 \details{
-R already contains two differentiation functions: D and deriv.  D does
+R already contains two differentiation functions: D and deriv. D does
 simple univariate differentiation.  "deriv" uses D do to multivariate
 differentiation.  The output of "D" is an expression, whereas the output of
-"deriv" is an executable function.
+"deriv" can be an executable function.
+
 R's existing functions have several limitations.  They can probably be fixed,
 but since they are written in C, this would probably require a lot of work.
 Limitations include:
@@ -62,21 +71,40 @@ So, here are the advantages of this implementation:
  \item It is entirely written in R, so would be easier to maintain.
  \item Can do multi-variate differentiation.
  \item Can differentiate function calls:
+ \itemize{
+	   \item if the function is in the derivative table, then the chain rule
+	is applied.  For example, if you declared that the derivative of
+	sin is cos, then it would figure out how to call cos correctly.
+	   \item if the function is not in the derivative table (or it is anonymous),
+	then the function body is substituted in.
+	   \item these two methods can be mixed.  An entry in the derivative table
+	need not be self-contained -- you don't need to provide an infinite
+	chain of derivatives.
+ }
  \item It's easy to add custom entries to the derivatives table, e.g.
+
+  \code{drule[["cos"]] <- list(-._d1*sin(._1))}
  \item The output is an executable function, which makes it suitable
-for use in optimization problems.
+     for use in optimization problems.
+ \item Compound functions (i.e. piece-wise functions based on if-else operator) can
+     be differentiated (cf. examples section).
 }
 
 Two working environments \code{drule} and \code{simplifications} are
 exported in the package namescape.
-As their names indicates, they contain tables of derivative and
+As their names indicate, they contain tables of derivative and
 simplification rules.
 To see the list of defined rules do \code{ls(drule)}.
 To add your own derivative rule for a function called say \code{sinpi(x)} calculating sin(pi*x), do \code{drule[["sinpi"]] <- list(quote(pi*._d1*cospi(._1)))}.
 Here, "._1" stands for the "first arguments", "._d1" for the first derivative of the first arguments. For a function that might have more than one argument,
-e.g. log(x, base=exp(1)), the drule entry must be a list with one rule
+e.g. \code{log(x, base=exp(1))}, the drule entry must be a list with one rule
 per number of possible arguments. See \code{drule$log} for an example to follow.
-After adding \code{sinpi} you can derivate expressions like \code{Deriv(~ sinpi(x^2), "x")}
+After adding \code{sinpi} you can differentiate expressions like \code{Deriv(~ sinpi(x^2), "x")}
+
+NB. In \code{abs()} and \code{sign()} function, singularity treatment at point 0 is left to user's care.
+
+NB2. In Bessel functions, derivatives are calculated only by the first argument,
+     not by the \code{nu} argument which is supposed to be constant.
 }
 \examples{
 \dontrun{f <- function(x) x^2}
@@ -95,16 +123,39 @@ After adding \code{sinpi} you can derivate expressions like \code{Deriv(~ sinpi(
 # [1,] 0.6471023 0.1068000
 
 \dontrun{Deriv(~ f(x, y^2), "y")}
-# -(2 * (sin(x) * y * sin(y^2)))
+# -(2 * (y * sin(x) * sin(y^2)))
 
 \dontrun{Deriv(quote(f(x, y^2)), c("x", "y"))}
-# c(x = cos(x) * cos(y^2), y = -(2 * (sin(x) * y * sin(y^2))))
+# c(x = cos(x) * cos(y^2), y = -(2 * (y * sin(x) * sin(y^2))))
 
 \dontrun{Deriv(expression(sin(x^2) * y), "x")}
-# expression(cos(x^2) * (2 * x) * y)
+# expression(2*(x*y*cos(x^2)))
 
-Deriv("sin(x^2) * y", "x")
-"2 * (x * cos(x^2) * y)"
+Deriv("sin(x^2) * y", "x") # differentiate only by x
+"2 * (x * y * cos(x^2))"
+
+Deriv("sin(x^2) * y", cache.exp=FALSE) # differentiate by all variables (here by x and y)
+"c(x = 2 * (x * y * cos(x^2)), y = sin(x^2))"
+
+# Compound function example (here abs(x) smoothed near 0)
+fc <- function(x, h=0.1) if (abs(x) < h) 0.5*h*(x/h)**2 else abs(x)-0.5*h
+Deriv("fc(x)", "x", cache.exp=FALSE)
+"if (abs(x) < h) x/h else sign(x)"
+
+# Example of a first argument that cannot be evaluated in the current environment:
+\dontrun{
+  suppressWarnings(rm("xx", "yy"))
+  Deriv(xx^2+yy^2)
+}
+# c(xx = 2 * xx, yy = 2 * yy)
+
+# Automatic differentiation (AD), note itermediate variable \\code{d} assignment
+\dontrun{Deriv(~{d <- ((x-m)/s)^2; exp(-0.5*d)}, "x")}
+#{
+#   d <- ((x - m)/s)^2
+#   .d_x <- 2 * ((x - m)/s^2)
+#   -(0.5 * (.d_x * exp(-(0.5 * d))))
+#}
 }
 \concept{
 symbollic differentiation
