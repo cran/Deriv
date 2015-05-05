@@ -80,7 +80,7 @@
 #'      be differentiated (cf. examples section).
 #' }
 #' 
-#' Two working environments \code{drule} and \code{simplifications} are
+#' Two work environments \code{drule} and \code{simplifications} are
 #' exported in the package namescape.
 #' As their names indicate, they contain tables of derivative and
 #' simplification rules.
@@ -140,7 +140,7 @@
 #' }
 #' # c(xx = 2 * xx, yy = 2 * yy)
 #' 
-#' # Automatic differentiation (AD), note itermediate variable \code{d} assignment
+#' # Automatic differentiation (AD), note itermediate variable 'd' assignment
 #' \dontrun{Deriv(~{d <- ((x-m)/s)^2; exp(-0.5*d)}, "x")}
 #' #{
 #' #   d <- ((x - m)/s)^2
@@ -159,6 +159,7 @@
 
 Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (is.character(f)) parse(text=f) else f), env=if (is.function(f)) environment(f) else parent.frame(), use.D=FALSE, cache.exp=TRUE) {
 	tf <- try(f, silent=TRUE)
+	fch <- deparse(substitute(f))
 	if (inherits(tf, "try-error")) {
 		f <- substitute(f)
 	}
@@ -195,8 +196,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		format1(res)
 	} else if (is.function(f)) {
 		b <- body(f)
-		if ((is.call(b) && (b[[1]] == as.symbol(".Internal") || b[[1]] == as.symbol(".External"))) || (is.null(b) && is.primitive(f))) {
-			fch <- deparse(substitute(f))
+		if ((is.call(b) && (b[[1]] == as.symbol(".Internal") || b[[1]] == as.symbol(".External"))) || (is.null(b) && (is.primitive(f)) || !is.null(drule[[fch]]))) {
 			if (fch %in% dlin || !is.null(drule[[fch]])) {
 				arg <- lapply(names(formals(args(f))), as.symbol)
 				acall <- as.call(c(as.symbol(fch), arg))
@@ -329,8 +329,15 @@ Deriv_ <- function(st, x, env, use.D) {
 		if (use.D) {
 			return(Simplify(D(st, x)))
 		}
+#if (stch == "myfun")
+#	browser()
 		# prepare replacement list
-		da <- args(stch)
+		da <- try(args(stch), silent=TRUE)
+		if (inherits(da, "try-error")) {
+			# last chance to get unknown function definition
+			# may be it is a user defined one?
+			da <- args(get(stch, mode="function", envir=env))
+		}
 		mc <- as.list(match.call(definition=da, call=st))[-1]
 		da <- as.list(da)
 		da <- da[-length(da)] # all declared arguments with default values
@@ -412,9 +419,11 @@ drule[["asin"]] <- qlist(x=1/sqrt(1-x^2))
 drule[["acos"]] <- qlist(x=-1/sqrt(1-x^2))
 drule[["atan"]] <- qlist(x=1/(1+x^2))
 drule[["atan2"]] <- qlist(y=x/(x^2+y^2), x=-y/(x^2+y^2))
-drule[["sinpi"]] <- qlist(x=pi*cospi(x))
-drule[["cospi"]] <- qlist(x=-pi*sinpi(x))
-drule[["tanpi"]] <- qlist(x=pi/cospi(x)^2)
+if (getRversion() >= "3.1.0") {
+   drule[["sinpi"]] <- qlist(x=pi*cospi(x))
+   drule[["cospi"]] <- qlist(x=-pi*sinpi(x))
+   drule[["tanpi"]] <- qlist(x=pi/cospi(x)^2)
+}
 # hyperbolic
 drule[["sinh"]] <- qlist(x=cosh(x))
 drule[["cosh"]] <- qlist(x=sinh(x))

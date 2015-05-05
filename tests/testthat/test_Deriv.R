@@ -1,4 +1,7 @@
-context("Symbolic differentiation rules")
+context(paste("Symbolic differentiation rules v", packageVersion("Deriv"), sep=""))
+lc_orig=Sys.getlocale(category = "LC_COLLATE")
+Sys.setlocale(category = "LC_COLLATE", locale = "C")
+
 f=function(x) {} # empty place holder
 
 expect_equal_deriv <- function(t, r, nmvar="x") {
@@ -23,8 +26,10 @@ expect_equal_deriv <- function(t, r, nmvar="x") {
    # compare as function
    body(f)=test
    ans=Deriv(f, nmvar, cache.exp=FALSE)
-   #print(deparse(ans))
    body(f)=ref
+#cat("\nf deriv=", format1(ans), "\n", sep="")
+#cat("\nsimplify=", format1(Simplify(ans)), "\n", sep="")
+#cat("f ref=", format1(f), "\n", sep="")
    eval(bquote(expect_equal(quote(.(ans)), quote(.(f)))))
    # compare with central differences
    x=seq(0.1, 1, len=10)
@@ -63,13 +68,17 @@ test_that("elementary functions", {
    expect_equal_deriv(log1p(x), 1/(x+1))
    expect_equal_deriv(abs(x), sign(x))
    expect_equal_deriv(sign(x), 0)
-   expect_equal_deriv(sinpi(x), pi*cospi(x))
-   expect_equal_deriv(cospi(x), -(pi*sinpi(x)))
-   expect_equal_deriv(tanpi(x), pi/cospi(x)**2)
    expect_equal_deriv(sinh(x), cosh(x))
    expect_equal_deriv(cosh(x), sinh(x))
    expect_equal_deriv(tanh(x), 1-tanh(x)^2)
 })
+if (getRversion() >= "3.1.0") {
+   test_that("trigonometric functions with pi", {
+      expect_equal_deriv(sinpi(x), pi*cospi(x))
+      expect_equal_deriv(cospi(x), -(pi*sinpi(x)))
+      expect_equal_deriv(tanpi(x), pi/cospi(x)**2)
+   })
+}
 test_that("special functions", {
    expect_equal_deriv(beta(x, y), beta(x, y) * (digamma(x) - digamma(x + y)))
    expect_equal_deriv(beta(x, y), beta(x, y) * (digamma(y) - digamma(x + y)), "y")
@@ -149,6 +158,11 @@ fsq <- function(x) x^2
 fsc <- function(x, y) sin(x) * cos(y)
 f_ <- Deriv(fsc)
 fc <- function(x, h=0.1) if (abs(x) < h) 0.5*h*(x/h)**2 else abs(x)-0.5*h
+myfun <- function(x, y=TRUE) NULL # do something usefull
+dmyfun <- function(x, y=TRUE) NULL # myfun derivative by x.
+drule[["myfun"]] <- qlist(x=dmyfun(x, y), y=NULL) # y is just a logical
+#cat("Deriv(myfun)=", format1(Deriv(myfun)), "\n")
+
 test_that("doc examples", {
    expect_equal_format1(Deriv(fsq), function (x) 2 * x)
    expect_equal_format1(Deriv(fsc), function (x, y) c(x = cos(x) * cos(y), y = -(sin(x) * sin(y))))
@@ -158,4 +172,6 @@ test_that("doc examples", {
    expect_equal(Deriv(expression(sin(x^2) * y), "x"), expression(2 * (x * y * cos(x^2))))
    expect_equal(Deriv("sin(x^2) * y", "x"), "2 * (x * y * cos(x^2))")
    expect_equal(Deriv(fc, "x", cache=FALSE), function(x, h=0.1) if (abs(x) < h) x/h else sign(x))
+   expect_equal(Deriv(myfun(z^2, FALSE), "z"), quote(2 * (z * dmyfun(z^2, FALSE))))
 })
+Sys.setlocale(category = "LC_COLLATE", locale = lc_orig)
