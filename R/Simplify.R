@@ -3,7 +3,7 @@
 #' @aliases Simplify simplifications
 #' @concept symbolic simplification
 # \usage{
-# Simplify(expr, env=parent.frame())
+# Simplify(expr, env=parent.frame(), scache=new.env())
 # }
 #' 
 #' 
@@ -15,28 +15,27 @@
 #'    \item a right hand side of a formula: \code{~x+x}
 #'    \item a language: \code{quote(x+x)}
 #' }
-#' @param env An environment in wich a simplified function is created
+#' @param env An environment in which a simplified function is created
 #'  if \code{expr} is a function. This argument is ignored in all other cases.
+#' @param scache An environment where there is a list in which simplified expression are cached
 #' @return A simplified expression. The result is of the same type as
 #'  \code{expr} except for formula, where a language is returned.
-#' @details An environment \code{simplifications} containing simplification rules, is exported in the user namespace.
-Simplify <- function(expr, env=parent.frame()) {
-	te <- try(expr, silent=TRUE)
-	if (inherits(te, "try-error")) {
-		expr <- substitute(expr)
-	}
+#' @details An environment \code{simplifications} containing simplification rules, is exported in the namespace accessible by the user.
+Simplify <- function(expr, env=parent.frame(), scache=new.env()) {
+	if (is.null(scache$l))
+		scache$l <- list() # for stand alone use of Simplify
 	if (is.expression(expr)) {
-		as.expression(Simplify_(expr[[1]]))
+		as.expression(Simplify_(expr[[1]], scache))
 	} else if (is.function(expr)) {
 		as.function(c(as.list(formals(expr)),
-			Simplify_(body(expr))),
+			Simplify_(body(expr), scache)),
 			envir=env)
 	} else if (is.call(expr) && expr[[1]] == as.symbol("~")) {
-		Simplify_(expr[[length(expr)]])
+		Simplify_(expr[[length(expr)]], scache)
 	} else if (is.character(expr)) {
-		format1(Simplify_(parse(text=expr)[[1]]))
+		format1(Simplify_(parse(text=expr)[[1]], scache))
 	} else {
-		Simplify_(expr)
+		Simplify_(expr, scache)
 	}
 }
 
@@ -58,34 +57,34 @@ format1 <- function(expr) {
 	return(res)
 }
 
-Simplify_ <- function(expr) {
+Simplify_ <- function(expr, scache) {
 	if (is.call(expr)) {
 		che <- format1(expr)
-		res <- scache[[che]]
+		res <- scache$l[[che]]
 		if (!is.null(res)) {
 			if (typeof(res) == "logical" && is.na(res)) {
 				# recursive infinite call
-				scache[[che]] <- expr
+				scache$l[[che]] <- expr
 				return(expr)
 			} else {
 				return(res)
 			}
 		}
-		scache[[che]] <- NA # token holder
+		scache$l[[che]] <- NA # token holder
 #cat("simp expr=", format1(expr), "\n", sep="")
-		args <- lapply(as.list(expr)[-1], Simplify_)
+		args <- lapply(as.list(expr)[-1], Simplify_, scache)
 		expr[-1]=args
 		if (all(sapply(args, is.conuloch))) {
 			# if all arguments are like numeric, evaluate them
 			res <- eval(expr)
-			scache[[che]] <- res
+			scache$l[[che]] <- res
 			return(res)
 		} else {
 			# is there a rule in the table?
 			sym.name <- as.character(expr[[1]])
 			Simplify.rule <- simplifications[[sym.name]]
-			res <- if (!is.null(Simplify.rule)) Simplify.rule(expr) else expr
-			scache[[che]] <- res
+			res <- if (!is.null(Simplify.rule)) Simplify.rule(expr, scache=scache) else expr
+			scache$l[[che]] <- res
 			return(res)
 		}
 	} else {
@@ -95,11 +94,11 @@ Simplify_ <- function(expr) {
 
 
 # in what follows no need to Simplify_ args neither to check if
-# all arguments are unumeric. It is done in upper Simplify_()
-`Simplify.(` <- function(expr) {
+# all arguments are numeric. It is done in the upper Simplify_()
+`Simplify.(` <- function(expr, scache=NULL) {
 	expr[[2]]
 }
-`Simplify.+` <- function(expr, add=TRUE) {
+`Simplify.+` <- function(expr, add=TRUE, scache=NULL) {
 	if (length(expr) == 2) {
 		if (add)
 			return(expr[[2]])
@@ -123,9 +122,13 @@ Simplify_ <- function(expr) {
 		add <- FALSE
 		expr <- call("-", a, b)
 	} else if (identical(a, b)) {
-		return(if (add) Simplify_(call("*", 2, a)) else 0)
+		return(if (add) Simplify_(call("*", 2, a), scache) else 0)
 	} else if (!is.call(a) && !is.call(b)) {
-		return(expr) # nothing to simplify
+		if (add) {
+			# just reorder
+			expr[-1] <- expr[1+order(sapply(expr[-1], as.character))]
+		}
+		return(expr)
 	}
 	# factorise most repeated terms
 	alc <- Lincomb(a)
@@ -183,7 +186,7 @@ Simplify_ <- function(expr) {
 	}
 #browser()
 	if (is.na(fnd))
-		return(lc2expr(lc)) # nothing to factorize, just order terms
+		return(lc2expr(lc, scache)) # nothing to factorize, just order terms
 	ond <- if (fnd == "num") "den" else "num"
 	# create nd with the first factor
 	fa_nd <- list(num=list(b=list(), p=list()),
@@ -193,7 +196,7 @@ Simplify_ <- function(expr) {
 	fa_nd[[fnd]]$p <- list(p_fa)
 	# decrease p in the lc terms
 	for (i in seq_along(i_lc)) {
-		lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]] <- Simplify_(call("-", lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]], p_fa))
+		lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]] <- Simplify_(call("-", lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]], p_fa), scache)
 	}
 	
 	for (cnd in c(fnd, ond)) {
@@ -216,33 +219,30 @@ Simplify_ <- function(expr) {
 p_fa)
 			# decrease p in the lc terms
 			for (i in seq_along(i_lc)) {
-				lc[[i_lc[i]]][[cnd]]$p[[i_nd[i]]] <- Simplify_(call("-", lc[[i_lc[i]]][[cnd]]$p[[i_nd[i]]], p_fa))
+				lc[[i_lc[i]]][[cnd]]$p[[i_nd[i]]] <- Simplify_(call("-", lc[[i_lc[i]]][[cnd]]$p[[i_nd[i]]], p_fa), scache)
 			}
 		}
 	}
 #browser()
 	# form final symbolic expression
 	# replace all i_lc by one product of fa_nd and lincomb of the reduced nds
-	rest <- Simplify_(lc2expr(lc[i_lc]))
-	if (is.numeric(rest) && rest < 0) {
-		rest <- -rest
-		fa_nd$sminus <- !fa_nd$sminus
-	} else if (is.uminus(rest)) {
-		rest <- rest[[2]]
+	rest <- Simplify_(lc2expr(lc[i_lc], scache), scache)
+	if (is.neg.expr(rest)) {
+		rest <- negate.expr(rest)
 		fa_nd$sminus <- !fa_nd$sminus
 	}
 	fa_nd$num$b <- append(fa_nd$num$b, rest)
 	fa_nd$num$p <- append(fa_nd$num$p, 1)
 	lc <- c(list(fa_nd), lc[-i_lc])
-	return(lc2expr(lc))
+	return(lc2expr(lc, scache))
 }
 
-`Simplify.-` <- function(expr)
+`Simplify.-` <- function(expr, scache=NULL)
 {
-	`Simplify.+`(expr, add=FALSE)
+	`Simplify.+`(expr, add=FALSE, scache=scache)
 }
 
-`Simplify.*` <- function(expr, div=FALSE)
+`Simplify.*` <- function(expr, div=FALSE, scache=NULL)
 {
 #print(expr)
 #browser()
@@ -262,9 +262,9 @@ p_fa)
 	if (a == 0 || (b == 0 && !div)) {
 		0
 	} else if (a == 1 && !div) {
-		if (sminus) substitute(-b) else b
+		if (sminus) call("-", b) else b
 	} else if (b == 1) {
-		if (sminus) substitute(-a) else a
+		if (sminus) call("-", a) else a
 	} else if (div && identical(a, b)) {
 		if (sminus) -1 else 1
 	} else {
@@ -325,7 +325,7 @@ p_fa)
 				isim <- which(nd_eq[,inum])
 				if (length(isim)) {
 					# add powers for this base
-					nd[[na]]$p[[isim[1]]] <- Simplify_(li2sum(nd[[na]]$p[isim]))
+					nd[[na]]$p[[isim[1]]] <- Simplify_(li2sum(nd[[na]]$p[isim]), scache)
 					# set grouped powers to 0
 					nd[[na]]$p[isim[-1]] <- 0
 				}
@@ -346,13 +346,13 @@ p_fa)
 			if (length(iden)) {
 				# simplify power for this pair
 				ipair <- cbind(ipair, c(inum, iden))
-				res <- Simplify_(call("-", nd$num$p[[inum]], nd$den$p[[iden]]))
-				if (res > 0) {
+				res <- Simplify_(call("-", nd$num$p[[inum]], nd$den$p[[iden]]), scache)
+				if (is.neg.expr(res)) {
+					nd$num$p[[inum]] <- 0
+					nd$den$p[[iden]] <- negate.expr(res)
+				} else {
 					nd$num$p[[inum]] <- res
 					nd$den$p[[iden]] <- 0
-				} else {
-					nd$num$p[[inum]] <- 0
-					nd$den$p[[iden]] <- Simplify_(substitute(-res))
 				}
 			}
 		}
@@ -367,15 +367,15 @@ p_fa)
 		}
 		nd[["fa"]] <- fa
 		nd[["sminus"]] <- sminus
-		expr <- nd2expr(nd)
+		expr <- nd2expr(nd, scache)
 		expr
 	}
 }
-`Simplify./` <- function(expr)
+`Simplify./` <- function(expr, scache=NULL)
 {
-	`Simplify.*`(expr, div=TRUE)
+	`Simplify.*`(expr, div=TRUE, scache=scache)
 }
-`Simplify.^` <- function(expr)
+`Simplify.^` <- function(expr, scache=NULL)
 {
 	a <- expr[[2]]
 	b <- expr[[3]]
@@ -393,11 +393,11 @@ p_fa)
 	} else if (is.call(a)) {
 		if (a[[1]] == as.symbol("^")) {
 			# product of exponents
-			b <- Simplify_(call("*", a[[3]], b))
+			b <- Simplify_(call("*", a[[3]], b), scache)
 			a <- a[[2]]
 		} else if (a[[1]] == as.symbol("sqrt")) {
 			# divide by 2
-			b <- Simplify_(call("/", b, 2))
+			b <- Simplify_(call("/", b, 2), scache)
 			a <- a[[2]]
 		} else if (a[[1]] == as.symbol("abs") && is.numeric(b) && b%%2 == 0) {
 			# remove abs() for even power
@@ -410,34 +410,39 @@ p_fa)
 		expr
 	}
 }
-Simplify.log <- function(expr) {
+Simplify.log <- function(expr, scache=NULL) {
 	if (is.call(expr[[2]])) {
 		# the argument of log is a function
 		subf <- as.character(expr[[2]][[1]])
 		if (subf == "^") {
 			p <- expr[[2]][[3]]
 			expr[[2]] <- expr[[2]][[2]]
-			expr <- Simplify_(call("*", p, expr))
+			expr <- Simplify_(call("*", p, expr), scache)
 		} else if (subf == "exp") {
 			if (length(expr) == 2)
 				expr <- expr[[2]][[2]]
 			else
-				expr <- Simplify_(call("/", expr[[2]][[2]], call("log", expr[[3]])))
+				expr <- Simplify_(call("/", expr[[2]][[2]], call("log", expr[[3]])), scache)
 		} else if (subf == "sqrt") {
 			expr[[2]] <- expr[[2]][[2]]
-			expr <- Simplify_(call("*", 0.5, expr))
+			expr <- Simplify_(call("*", 0.5, expr), scache)
 		} else if (subf == "*") {
 			a <- expr
 			a[[2]] <- expr[[2]][[2]]
 			expr[[2]] <- expr[[2]][[3]] # unitary "+" cannot appear here
-			expr <- Simplify_(call("+", a, expr))
+			expr <- Simplify_(call("+", a, expr), scache)
 		} else if (subf == "/") {
 			a <- expr
 			a[[2]] <- expr[[2]][[2]]
 			expr[[2]] <- expr[[2]][[3]] # unitary "+" cannot appear here
-			expr <- Simplify_(call("-", a, expr))
-		} else {
-			expr
+			expr <- Simplify_(call("-", a, expr), scache)
+		} else if (subf == "+") {
+			# replace log(1+x) by log1p(x)
+			if (expr[[2]][[2]] == 1) {
+				expr <- call("log1p", expr[[2]][[3]])
+			} else if (expr[[2]][[3]] == 1) {
+				expr <- call("log1p", expr[[2]][[2]])
+			}
 		}
 	}
 	if (length(expr) == 3 && identical(expr[[2]], expr[[3]])) {
@@ -446,20 +451,20 @@ Simplify.log <- function(expr) {
 		expr
 	}
 }
-Simplify.sqrt <- function(expr) {
+Simplify.sqrt <- function(expr, scache=NULL) {
 	if (is.call(expr[[2]])) {
 		# the argument of sqrt is a function
 		subf <- as.character(expr[[2]][[1]])
 		if (subf == "^") {
 			p <- expr[[2]][[3]]
-			Simplify_(call("^",  call("abs", expr[[2]][[2]]), call("/", p, 2)))
+			Simplify_(call("^",  call("abs", expr[[2]][[2]]), call("/", p, 2)), scache)
 		} else if (subf == "exp") {
-			expr[[2]][[2]] <- Simplify_(call("/", expr[[2]][[2]], 2))
+			expr[[2]][[2]] <- Simplify_(call("/", expr[[2]][[2]], 2), scache)
 			expr[[2]]
 		} else if (subf == "sqrt") {
-			Simplify_(call("^", expr[[2]][[2]], 0.25))
+			Simplify_(call("^", expr[[2]][[2]], 0.25), scache)
 		} else if (subf == "*" && identical(expr[[2]][[2]], expr[[2]][[3]])) {
-			Simplify_(call("abs", expr[[2]][[2]]))
+			Simplify_(call("abs", expr[[2]][[2]]), scache)
 		} else {
 			expr
 		}
@@ -467,7 +472,7 @@ Simplify.sqrt <- function(expr) {
 		expr
 	}
 }
-Simplify.abs <- function(expr) {
+Simplify.abs <- function(expr, scache=NULL) {
 	if (is.uminus(expr[[2]])) {
 		expr[[2]] <- expr[[2]][[2]]
 	} else if (is.call(expr[[2]])) {
@@ -482,7 +487,7 @@ Simplify.abs <- function(expr) {
 	}
 	expr
 }
-Simplify.sign <- function(expr) {
+Simplify.sign <- function(expr, scache=NULL) {
 	if (is.uminus(expr[[2]])) {
 		expr[[2]] <- expr[[2]][[2]]
 		expr <- call("-", expr)
@@ -498,7 +503,7 @@ Simplify.sign <- function(expr) {
 	}
 	expr
 }
-Simplify.if <- function(expr) {
+Simplify.if <- function(expr, scache=NULL) {
 	cond <- expr[[2]]
 	if ((is.logical(cond) || is.numeric(cond)) && isTRUE(!!cond)) {
 		expr <- expr[[3]]
@@ -511,12 +516,19 @@ Simplify.if <- function(expr) {
 	}
 	expr
 }
-Simplify.bessel <- function(expr) {
+Simplify.bessel <- function(expr, scache=NULL) {
 	if (length(expr) < 4)
 		return(expr)
 	cond <- expr[[4]]
 	if ((is.logical(cond) || is.numeric(cond)) && isTRUE(!cond)) {
 		expr[[4]] <- NULL
+	}
+	expr
+}
+`Simplify.=` <- function(expr, scache=NULL) {
+	# just strore the rhs in the scache
+	if (is.symbol(expr[[2]]) && is.call(expr[[3]])) {
+		scache$l[[format1(expr[[3]])]] <- expr[[2]]
 	}
 	expr
 }
@@ -534,7 +546,7 @@ Numden <- function(expr) {
 	} else if (is.uplus(expr)) {
 		Numden(expr[[2]])
 	} else if (is.symbol(expr)) {
-		list(num=list(b=list(expr), p=1),
+		list(num=list(b=list(expr), p=list(1)),
 			sminus=FALSE,
 			fa=list(num=1, den=1))
 	} else if (is.numeric(expr)) {
@@ -559,23 +571,25 @@ Numden <- function(expr) {
 				sminus=xor(a$sminus, b$sminus),
 				fa=list(num=a$fa$num*b$fa$den, den=a$fa$den*b$fa$num))
 		} else if (expr[[1]] == as.symbol("^")) {
-			if (expr[[3]] < 0) {
+			if (is.neg.expr(expr[[3]])) {
 				# make the power look positive
-				list(den=list(b=list(expr[[2]]), p=if (is.numeric(expr[[3]])) -expr[[3]] else list(expr[[3]][[2]])),
+				list(den=list(b=list(expr[[2]]), p=list(negate.expr(expr[[3]]))),
 					sminus=FALSE,
-					fa=list(num=1, den=1))
+					fa=list(num=1, den=1)
+				)
 			} else {
 				list(num=list(b=list(expr[[2]]), p=list(expr[[3]])),
 					sminus=FALSE,
-					fa=list(num=1, den=1))
+					fa=list(num=1, den=1)
+				)
 			}
 		} else {
-			list(num=list(b=list(expr), p=1),
+			list(num=list(b=list(expr), p=list(1)),
 				sminus=FALSE,
 				fa=list(num=1, den=1))
 		}
 	} else {
-		list(num=list(b=list(expr), p=1),
+		list(num=list(b=list(expr), p=list(1)),
 			sminus=FALSE,
 			fa=list(num=1, den=1))
 	}
@@ -595,6 +609,23 @@ is.unumeric <- function(e) {
 is.conuloch <- function(e) {
 	# detect if e is complex, numeric, logical or character
 	return(is.numeric(e) || is.logical(e) || is.complex(e) || is.character(e))
+}
+is.neg.expr <- function(e) {
+	# detect if e is a negative expression, i.e. is one of:
+	#  - negative real number
+	#  - unitary minus (-a)
+	return((is.numeric(e) && e < 0) || is.uminus(e))
+}
+negate.expr <- function(e) {
+	# make negative expression looking positive or inverse the difference
+	if (is.numeric(e)) 
+		-e
+	else # e is supposed to be a unitary minus
+		e[[2]]
+}
+is.assign <- function(e) {
+	# detect if it is an assignment operator
+	is.call(e) && (e[[1]] == as.symbol("<-") || e[[1]] == as.symbol("="))
 }
 Lincomb <- function(expr) {
 	# decompose expr in a list of product terms (cf Numden)
@@ -620,30 +651,79 @@ Lincomb <- function(expr) {
 
 # return an environement in wich stored subexpressions with
 # an index giving the position of each subexpression in the
-# whole statement st
+# whole statement st. Index is given as a string i1.i2.i3...
+# where the integeres iN refer to st[[i2]][[i3]][[...]]
 Leaves <- function(st, ind="1", res=new.env()) {
+	if (is.null(res$rhs)) {
+		res$rhs <- list()
+		res$lhs <- list()
+		res$def <- list() # store definitions by asignments
+	}
 	if (is.call(st)) {
-		res[[ind]] <- format1(st)
+		if (st[[1]] != as.symbol("<-") && st[[1]] != as.symbol("=")) {
+			res$rhs[[ind]] <- format1(st)
+		} else {
+			if (!is.null(res$lhs[[ind]]))
+				stop("Re-assignment is not supported yet in caching.")
+			if (is.call(st[[2]]))
+				stop("Cannot handle yet indexing in left values.")
+			lhs <- as.character(st[[2]])
+			res$lhs[[ind]] <- lhs # we cannot handle yet `[`, `$` etc.
+			res$def[[lhs]] <- format1(st[[3]])
+			# exclude this assignement from replacements if .eX
+			#if (regexpr("\\.+e[0-9]+", lhs) > 0)
+			#	return(res)
+		}
 		args <- as.list(st)[-1]
 		l <- lapply(seq_along(args), function(i) Leaves(args[[i]], paste(ind, i+1, sep="."), res))
 	}
 	return(res)
 }
 
+# convert index calculated by Leaves() to a call like st[[i2]][[i3]]...
+# the first two chars "1." are striped out
+ind2call <- function(ind, st="st")
+	if (ind == "1") as.symbol(st) else parse(text=sprintf("%s[[%s]]", st, gsub("\\.", "]][[", substring(ind, 3))))[[1]]
+
 # replace repeated subexpressions by cached values
-Cache <- function(st, env=Leaves(st), prefix="") {
+# prefix is used to form auxiliary variable
+Cache <- function(st, env=Leaves(st), prefix="", stind="") {
 	stch <- if (is.call(st)) as.character(st[[1]]) else ""
-	if (stch == "<-" || stch == "=") {
-		return(call("<-", st[[2]], Cache(st[[3]], prefix=paste(".", st[[1]], sep=""))))
-	} else if (stch == "{") {
-		return(as.call(c(list(st[[1]]), lapply(as.list(st)[-1], Cache))))
-	}
+	env$lhs <- unlist(env$lhs)
+	#if (stch == "<-" || stch == "=") {
+	#	return(call("<-", st[[2]], Cache(st[[3]], env=env, prefix=paste(".", st[[2]], sep=""))))
+	#} else if (stch == "{" || stch == "c") {
+	#	return(as.call(c(list(st[[1]]), lapply(as.list(st)[-1], Cache, env=env))))
+	#}
 	alva <- all.vars(st)
 	p <- grep(sprintf("^%s.e[0-9]+", prefix), alva, value=T)
-	if (length(p) > 0) {
+	if (nchar(prefix) == 0 && length(p) > 0) {
 		prefix <- max(p)
 	}
-	ve <- unlist(as.list(env))
+	ve <- unlist(env$rhs)
+	defs <- unlist(env$def)
+	# if the subexpression is in defs, replace it with the symbol in the lhs
+	tdef <- outer(ve, defs, "==")
+#browser()
+	if (ncol(tdef) > 0) {
+		for (ic in seq_len(ncol(tdef))) {
+			v <- tdef[,ic]
+			nme <- colnames(tdef)[ic]
+			for (i in which(v)) {
+				ind <- names(v)[i]
+				ve[i] <- NA
+				# skip self assignment
+				ispl <- strsplit(ind, ".", fixed=TRUE)[[1]]
+				indup <- paste(ispl[-length(ispl)], collapse=".")
+				stup <- eval(ind2call(indup))
+				if (is.assign(stup) && as.character(stup[[2]]) == nme)
+					next
+				do.call(`<-`, list(ind2call(ind), quote(as.symbol(nme))))
+			}
+		}
+	}
+	suppressWarnings(ve <- ve[!is.na(ve)])
+	
 	ta <- table(ve)
 	ta <- ta[ta > 1]
 	if (length(ta) == 0)
@@ -651,11 +731,11 @@ Cache <- function(st, env=Leaves(st), prefix="") {
 	e <- list() # will store the result code
 	alva <- list()
 	for (sub in names(sort(ta, decreasing=TRUE))) {
-		# get indexes for this subexpression
+		# get st indexes for this subexpression
 		isubs <- names(which(ve == sub))
 		for (i in seq_along(isubs)) {
 			isub <- isubs[i]
-			subst <- parse(text=sprintf("st[[%s]]", gsub("\\.", "]][[", substring(isub, 3))))[[1]]
+			subst <- ind2call(isub)
 			if (i == 1) {
 				esubst <- try(eval(subst), silent=TRUE)
 				if (inherits(esubst, "try-error"))
@@ -671,15 +751,12 @@ Cache <- function(st, env=Leaves(st), prefix="") {
 			do.call(`<-`, list(subst, as.symbol("esub")))
 		}
 	}
-#browser()
 	alva[["end"]] <- all.vars(st)
 	# where .eX are used? If only once, develop, replace and remove it
 	wh <- lapply(seq_along(e), function(i) {
 		it=sprintf("%s.e%d", prefix, i)
 		which(sapply(alva, function(v) any(it == v)))
 	})
-	# the final touch
-	e[[ie+1]] <- st
 	dere <- sapply(wh, function(it) if (length(it) == 1 && names(it) != "end") it[[1]] else 0)
 	for (i in which(dere != 0)) {
 		idest <- dere[i]
@@ -687,11 +764,83 @@ Cache <- function(st, env=Leaves(st), prefix="") {
 		li[[sprintf("%s.e%d", prefix, i)]] <- e[[i]][[3]]
 		e[[idest]][[3]] <- do.call("substitute", c(e[[idest]][[3]], list(li)))
 	}
-	e <- c(list(as.symbol("{")), e[which(!dere)], e[length(e)])
-	return(as.call(e))
+	e <- e[which(!dere)]
+#browser()
+	# place auxiliary vars after the definition of the used vars
+	if (stch != "{") {
+		l <- c(as.symbol("{"), e, st)
+		st <- as.call(l)
+	} else {
+		indst <- c() # vector of char indexes after which e must be inserted in st. "1" means insret as first after `{`
+		ist="1"
+		for (aux in e) {
+			depv <- all.vars(aux[[3]])
+			# find the biggest index in st where depv are assigned
+			suppressWarnings(whst <- max(sapply(depv, function(v) max(which(v == env$lhs)))))
+			ist <- max.nat(ist, if (whst == -Inf) "1" else names(env$lhs)[whst])
+			indst <- c(indst, ist)
+		}
+		oist <- order(indst)
+		for (i in rev(oist)) {
+			ind <- indst[i]
+			if (ind == "0") {
+				stli <- as.list(st)
+				ia <- 1
+			} else {
+				ili <- gsub("\\.[0-9]+$", "", ind) # ili is the list where assihnment is iserted, ia is index in this list after which the insertion takes place
+				ia <- as.integer(substring(ind, nchar(ili)+2))
+				stcall <- ind2call(ili)
+				stli <- as.list(eval(stcall))
+			}
+			stli <- as.call(append(stli, e[[i]], after=ia))
+			do.call("<-", list(stcall, quote(stli)))
+		}
+	}
+	return(st)
+}
+max.nat <- function(a, b, na.rm=FALSE, sep=".") {
+	# choose maximum string value among two strings a and b according
+	# to _natural ordering, i.e. here "1.10" > "1.2"
+	# Each string is splitted in a sequence of ingeter numbers using
+	# strsplit() with sep as separating element
+	# Eache element of the sequence is compared with corresponding
+	# element in the other sequence till the first max value is found
+	# if one sequence is longuer than the other with the first elements all equal,
+	# then the longuest sequence is the result
+	
+	if (na.rm) {
+		if (is.na(a))
+			return(b)
+		if (is.na(b))
+			return(a)
+	}
+	# split the strings
+	
+	spl <- lapply(strsplit(c(a, b), sep, fixed=TRUE), as.integer)
+	len <- sapply(spl, length)
+	res <- NA
+	va <- spl[[1]]
+	vb <- spl[[2]]
+	for (i in seq_len(min(len))) {
+		if (va[i] > vb[i])
+			res <- a
+		else if (va[i] < vb[i])
+			res <- b
+		else
+			res
+	}
+	if (is.na(res)) {
+		# all equal in first elements
+		if (len[[1]] > len[[2]])
+			return(a)
+		else
+			return(b)
+	} else {
+		return(res)
+	}
 }
 
-nd2expr <- function(nd, sminus=NULL) {
+nd2expr <- function(nd, scache, sminus=NULL) {
 	# form symbolic products
 	# if sminus is not null, use it instead of the nd's one
 	if (length(nd) == 0)
@@ -706,7 +855,7 @@ nd2expr <- function(nd, sminus=NULL) {
 			p <- nd[[na]]$p[[i]]
 			if (p == 0)
 				next
-			term <- if (p == 1) nd[[na]]$b[[i]] else Simplify_(call("^", nd[[na]]$b[[i]], p))
+			term <- if (p == 1) nd[[na]]$b[[i]] else Simplify_(call("^", nd[[na]]$b[[i]], p), scache)
 			if (term == 0)
 				return(if (na == "num") 0 else if (sminus) -Inf else Inf)
 			if (is.null(eprod[[na]]))
@@ -742,16 +891,16 @@ nd2expr <- function(nd, sminus=NULL) {
 		else
 			expr <- call("/", expr, fa$den)
 	}
-	expr <- if (sminus) substitute(-expr) else expr
+	expr <- if (sminus) call("-", expr) else expr
 #print(sprintf("nd->%s", format1(expr)))
 	return(expr)
 }
 
-lc2expr <- function(lc) {
+lc2expr <- function(lc, scache) {
 	# form symbolic sum and diff form a list of nds
 	# separate in positive and negative
 	smin <- sapply(lc, "[[", "sminus")
-	epos <- lapply(lc[which(!smin)], nd2expr)
+	epos <- lapply(lc[which(!smin)], nd2expr, scache)
 	if (length(epos) > 1) {
 #cat("epos orig=", sapply(epos, format1), sep="\n")
 #cat("epos order=", order(sapply(epos, format1)), sep="\n")
@@ -759,14 +908,14 @@ lc2expr <- function(lc) {
 		epos <- epos[order(sapply(epos, format1), decreasing = FALSE)]
 #cat("epos=", sapply(epos, format1), sep="\n")
 	}
-	eneg <- lapply(lc[which(smin)], nd2expr, sminus=FALSE)
+	eneg <- lapply(lc[which(smin)], nd2expr, scache, sminus=FALSE)
 	if (length(eneg) > 1) {
 		eneg <- eneg[order(sapply(eneg, format1))]
 	}
 	if (length(epos) == 0)
-		return(if (length(eneg) == 0) 0 else Simplify_(call("-", li2sum(eneg))))
+		return(if (length(eneg) == 0) 0 else call("-", li2sum(eneg)))
 	else
-		return(if (length(eneg) == 0) li2sum(epos) else Simplify_(call("-", li2sum(epos), li2sum(eneg))))
+		return(if (length(eneg) == 0) li2sum(epos) else Simplify_(call("-", li2sum(epos), li2sum(eneg)), scache))
 }
 
 li2sum <- function(li) {
@@ -788,7 +937,6 @@ li2sum <- function(li) {
 }
 
 simplifications <- new.env()
-scache <- new.env()
 
 assign("+", `Simplify.+`, envir=simplifications)
 assign("-", `Simplify.-`, envir=simplifications)
@@ -804,3 +952,5 @@ assign("sign", `Simplify.sign`, envir=simplifications)
 assign("if", `Simplify.if`, envir=simplifications)
 assign("besselI", `Simplify.bessel`, envir=simplifications)
 assign("besselK", `Simplify.bessel`, envir=simplifications)
+assign("<-", `Simplify.=`, envir=simplifications)
+assign("=", `Simplify.=`, envir=simplifications)

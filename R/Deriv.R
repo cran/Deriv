@@ -27,8 +27,7 @@
 #'  final expression must be optimized with cached subexpressions.
 #'  If enabled, repeated calculations are made only once and their
 #'  results stored in cache variables which are then reused.
-#' @param ... (in \code{qlist()}) is a suite of named unevaluated expressions.
-#'  It is used to add derivative rules to \code{drule} environment.
+#' @param ... cf. help(alist)
 #' 
 #' @return \itemize{
 #'  \item a function if \code{f} is a function
@@ -71,7 +70,7 @@
 #'  }
 #'  \item It's easy to add custom entries to the derivatives table, e.g.
 #'   
-#'   \code{drule[["cos"]] <- qlist(x=-sin(x))}
+#'   \code{drule[["cos"]] <- alist(x=-sin(x))}
 #'   
 #'   The chain rule will be automatically applied if needed.
 #'  \item The output is an executable function, which makes it suitable
@@ -85,7 +84,7 @@
 #' As their names indicate, they contain tables of derivative and
 #' simplification rules.
 #' To see the list of defined rules do \code{ls(drule)}.
-#' To add your own derivative rule for a function called say \code{sinpi(x)} calculating sin(pi*x), do \code{drule[["sinpi"]] <- qlist(x=pi*cospi(x))}.
+#' To add your own derivative rule for a function called say \code{sinpi(x)} calculating sin(pi*x), do \code{drule[["sinpi"]] <- alist(x=pi*cospi(x))}.
 #' Here, "x" stands for the first and unique argument in \code{sinpi()} definition. For a function that might have more than one argument,
 #' e.g. \code{log(x, base=exp(1))}, the drule entry must be a list with a named rule
 #' per argument. See \code{drule$log} for an example to follow.
@@ -95,6 +94,9 @@
 #' 
 #' NB2. In Bessel functions, derivatives are calculated only by the first argument,
 #'      not by the \code{nu} argument which is supposed to be constant.
+#' 
+#' NB3. qlist() is deprecated. Use a standard function alist() instead.
+#'      qlist() will be removed starting from the version 3.6
 #' @author Andrew Clausen (original version) and Serguei Sokol (maintainer)
 #' @examples
 #'
@@ -152,7 +154,7 @@
 #' \dontrun{
 #'   myfun <- function(x, y=TRUE) NULL # do something usefull
 #'   dmyfun <- function(x, y=TRUE) NULL # myfun derivative by x.
-#'   drule[["myfun"]] <- qlist(x=dmyfun(x, y), y=NULL) # y is just a logical
+#'   drule[["myfun"]] <- alist(x=dmyfun(x, y), y=NULL) # y is just a logical
 #'   Deriv(myfun(z^2, FALSE), "z")
 #'   # 2 * (z * dmyfun(z^2, FALSE))
 #' }
@@ -163,8 +165,12 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 	if (inherits(tf, "try-error")) {
 		f <- substitute(f)
 	}
-	# clean dsym env
-	rm(list=ls(dsym), envir=dsym)
+	# create dsym and scache local envs (to keep clean nested calls)
+	dsym <- new.env()
+	dsym$l <- list()
+	scache <- new.env()
+	scache$l <- list()
+	
 	if (is.null(env))
 		env <- .GlobalEnv
 	if (is.null(x)) {
@@ -179,7 +185,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		if (is.null(rule) && !fch %in% dlin) {
 			stop(sprintf("Undefined rule for '%s()' differentiation", fch))
 		}
-		res <- Deriv_(as.call(c(as.symbol(fch), lapply(x, as.symbol))), x, env, use.D)
+		res <- Deriv_(as.call(c(as.symbol(fch), lapply(x, as.symbol))), x, env, use.D, dsym, scache)
 		if (cache.exp)
 			res <- Cache(res)
 		return(as.function(c(af, res), envir=env))
@@ -190,17 +196,18 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 	}
 	if (is.character(f)) {
 		# f is to parse
-		res <- Deriv_(parse(text=f)[[1]], x, env, use.D)
+		res <- Deriv_(parse(text=f)[[1]], x, env, use.D, dsym, scache)
 		if (cache.exp)
 			res <- Cache(res)
 		format1(res)
 	} else if (is.function(f)) {
+#browser()
 		b <- body(f)
-		if ((is.call(b) && (b[[1]] == as.symbol(".Internal") || b[[1]] == as.symbol(".External"))) || (is.null(b) && (is.primitive(f)) || !is.null(drule[[fch]]))) {
+		if ((is.call(b) && (b[[1]] == as.symbol(".Internal") || b[[1]] == as.symbol(".External") || b[[1]] == as.symbol(".Call"))) || (is.null(b) && (is.primitive(f)) || !is.null(drule[[fch]]))) {
 			if (fch %in% dlin || !is.null(drule[[fch]])) {
 				arg <- lapply(names(formals(args(f))), as.symbol)
 				acall <- as.call(c(as.symbol(fch), arg))
-				res <- Deriv_(acall, x, env, use.D)
+				res <- Deriv_(acall, x, env, use.D, dsym, scache)
 				if (cache.exp)
 					res <- Cache(res)
 				as.function(c(formals(args(f)), res), envir=env)
@@ -208,26 +215,26 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 				stop(sprintf("Internal or external function '%s()' is not in derivative table.", fch))
 			}
 		} else {
-			res <- Deriv_(b, x, env, use.D)
+			res <- Deriv_(b, x, env, use.D, dsym, scache)
 			if (cache.exp)
 				res <- Cache(res)
 			as.function(c(formals(f), res), envir=env)
 		}
 	} else if (is.expression(f)) {
-		res <- Deriv_(f[[1]], x, env, use.D)
+		res <- Deriv_(f[[1]], x, env, use.D, dsym, scache)
 		if (cache.exp)
 			res <- Cache(res)
 		as.expression(res)
 	} else if (is.language(f)) {
 		if (is.call(f) && f[[1]] == as.symbol("~")) {
 			# rhs of the formula
-			res <- Deriv_(f[[length(f)]], x, env, use.D)
+			res <- Deriv_(f[[length(f)]], x, env, use.D, dsym, scache)
 			if (cache.exp)
 				res <- Cache(res)
 			res
 		} else {
 			# plain call derivation
-			res <- Deriv_(f, x, env, use.D)
+			res <- Deriv_(f, x, env, use.D, dsym, scache)
 			if (cache.exp)
 				res <- Cache(res)
 			res
@@ -236,7 +243,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		f <- substitute(f)
 		if (length(x) == 0)
 			x <- all.vars(f)
-		res <- Deriv_(f, x, env, use.D)
+		res <- Deriv_(f, x, env, use.D, dsym, scache)
 		if (cache.exp)
 			res <- Cache(res)
 		res
@@ -245,11 +252,13 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 }
 
 # workhorse function doing the main work of differentiation
-Deriv_ <- function(st, x, env, use.D) {
+Deriv_ <- function(st, x, env, use.D, dsym, scache) {
+	stch <- as.character(if (is.call(st)) st[[1]] else st)
 	# Make x scalar and wrap results in a c() call if length(x) > 1
-	if (length(x) > 1) {
+	if (length(x) > 1 && stch != "{") {
+#browser()
 		# many variables => recursive call on single name
-		res <- lapply(x, function(xi) {rm(list=ls(dsym), envir=dsym); Deriv_(st, xi, env, use.D)})
+		res <- lapply(x, function(xi) Deriv_(st, xi, env, use.D, dsym, scache))
 		names(res) <- x;
 		return(as.call(c(as.symbol("c"), res)))
 	}
@@ -260,10 +269,10 @@ Deriv_ <- function(st, x, env, use.D) {
 		stch <- as.character(st)
 		if (stch == x) {
 			return(1)
-		} else if (is.null(dsym[[stch]])) {
+		} else if (is.null(dsym$l[[x]][[stch]])) {
 			return(0)
 		} else {
-			return(dsym[[stch]])
+			return(dsym$l[[x]][[stch]])
 		}
 	} else if (is.call(st)) {
 #browser()
@@ -272,48 +281,75 @@ Deriv_ <- function(st, x, env, use.D) {
 		if (stch %in% dlin) {
 			# linear case
 			# differentiate all arguments then pass them to the function
-			dargs <- lapply(args, Deriv_, x, env, use.D)
-			return(Simplify_(as.call(c(st[[1]], dargs))))
+			dargs <- lapply(args, Deriv_, x, env, use.D, dsym, scache)
+			return(Simplify_(as.call(c(st[[1]], dargs)), scache))
 		}
 		nb_args=length(st)-1
 		# special cases: out of rule table or args(stch) -> NULL
 		if (stch == "{") {
 #browser()
-			# AD differentiation
+			# AD differentiation (may be with many x)
 			res=list(st[[1]])
-			for (a in args) {
-				if (is.call(a) && (a[[1]] == as.symbol("<-") || a[[1]] == as.symbol("="))) {
+			# initiate dsym[[xi]]
+			for (xi in x) {
+				if (is.null(dsym$l[[xi]]))
+					dsym$l[[xi]] <- list()
+			}
+			# collect defined var names (to avoid redifferentiation)
+			defs <- sapply(as.list(st)[-1], function(e) if (is.assign(e)) as.character(e[[2]]) else "")
+			for (iarg in seq_along(args)) {
+				a <- args[[iarg]]
+				if (is.assign(a)) {
 					if (!is.symbol(a[[2]]))
 						stop(sprintf("In AD mode, don't know how to deal with a non symbol '%s' at lhs", format1(a[[2]])))
+					# put in scache the assignement
+					Simplify_(a, scache)
 					res <- append(res, a)
-					de_a <- Deriv_(a[[3]], x, env, use.D)
 					ach <- as.character(a[[2]])
-					if (de_a == 0) {
-						next
-					} else if (!is.call(de_a)) {
-						dsym[[ach]] <- de_a
-						next
+					for (xi in x) {
+						d_a <- as.symbol(paste(".", ach, "_", xi, sep=""))
+						if (any(d_a == defs)) {
+							# already differentiated in previous calls
+							dsym$l[[xi]][[ach]] <- d_a
+							next
+						}
+						de_a <- Deriv_(a[[3]], xi, env, use.D, dsym, scache)
+						if (de_a == 0) {
+							next
+						} else if (!is.call(de_a)) {
+							dsym$l[[xi]][[ach]] <- de_a
+							next
+						}
+						dsym$l[[xi]][[ach]] <- d_a
+						res <- append(res, call("<-", d_a, de_a))
+						# store it in scache too
+						scache$l[[format1(de_a)]] <- as.symbol(d_a)
 					}
-					d_a <- as.symbol(paste(".", ach, "_", x, sep=""))
-					dsym[[ach]] <- d_a
-					res <- append(res, call("<-", d_a, de_a))
 				} else {
-					res <- append(res, Deriv_(a, x, env, use.D))
+					de_a <- lapply(x, function(xi) Deriv_(a, xi, env, use.D, dsym, scache))
+					if (length(x) > 1) {
+						names(de_a) <- x
+						res <- append(res, as.call(c(as.symbol("c"), de_a)))
+					} else {
+						res <- append(res, de_a)
+					}
 				}
 			}
 			return(as.call(res))
 		} else if (is.uminus(st)) {
-			return(Simplify(call("-", Deriv_(st[[2]], x, env, use.D))))
+			return(Simplify(call("-", Deriv_(st[[2]], x, env, use.D, dsym, scache)), scache=scache))
 		} else if (stch == "(") {
-			return(Simplify(Deriv_(st[[2]], x, env, use.D)))
+#browser()
+			return(Simplify(Deriv_(st[[2]], x, env, use.D, dsym, scache), scache=scache))
 		} else if (stch == "if") {
 			return(if (nb_args == 2)
-				Simplify(call("if", st[[2]], Deriv_(st[[3]], x, env, use.D))) else
-				Simplify(call("if", st[[2]], Deriv_(st[[3]], x, env, use.D),
-					Deriv_(st[[4]], x, env, use.D))))
+				Simplify(call("if", st[[2]], Deriv_(st[[3]], x, env, use.D, dsym, scache)), scache=scache) else
+				Simplify(call("if", st[[2]], Deriv_(st[[3]], x, env, use.D, dsym, scache),
+					Deriv_(st[[4]], x, env, use.D, dsym, scache)), scache=scache))
 		}
 		rule <- drule[[stch]]
 		if (is.null(rule)) {
+#browser()
 			# no derivative rule for this function
 			# try to get the body and differentiate it
 			ff <- get(stch, mode="function", envir=env)
@@ -321,13 +357,17 @@ Deriv_ <- function(st, x, env, use.D) {
 			if (is.null(bf)) {
 				stop(sprintf("Could not retrieve body of '%s()'", stch))
 			}
+			if (is.call(bf) && (bf[[1]] == as.symbol(".External") || bf[[1]] == as.symbol(".Internal") || bf[[1]] == as.symbol(".Call"))) {
+#cat("aha\n")
+				stop(sprintf("Function '%s()' is not in derivative table", stch))
+			}
 			mc <- match.call(ff, st)
-			st <- Simplify_(do.call("substitute", list(bf, as.list(mc)[-1])))
-			return(Deriv_(st, x, env, use.D))
+			st <- Simplify_(do.call("substitute", list(bf, as.list(mc)[-1])), scache)
+			return(Deriv_(st, x, env, use.D, dsym, scache))
 		}
 		# there is a rule!
 		if (use.D) {
-			return(Simplify(D(st, x)))
+			return(Simplify(D(st, x), scache=scache))
 		}
 #if (stch == "myfun")
 #	browser()
@@ -348,14 +388,14 @@ Deriv_ <- function(st, x, env, use.D) {
 		# which arguments have to be differentiated?
 		iad <- which(!sapply(rule, is.null))
 		rule <- rule[iad]
-		lsy <- ls(dsym, all.names=TRUE)
+		lsy <- unlist(lapply(dsym$l, ls, all.names=TRUE))
 		if (!any(names(which(sapply(mc, function(it) {av <- all.vars(it); any(x == av) || any(av %in% lsy)}))) == names(rule))) {
 			#warning(sprintf("A call %s cannot be differentiated by the argument '%s'", format1(st), x))
 			return(0)
 		}
 		# rules and dargs are ordered by mc names
 		rule <- rule[names(mc)]
-		dargs <- lapply(mc, Deriv_, x, env, use.D)
+		dargs <- lapply(mc, Deriv_, x, env, use.D, dsym, scache)
 		ize <- sapply(dargs, `==`, 0)
 		dargs <- dargs[!ize]
 		rule <- rule[!ize]
@@ -367,13 +407,14 @@ Deriv_ <- function(st, x, env, use.D) {
 		ione <- sapply(dargs, `==`, 1)
 		imone <- sapply(dargs, `==`, -1)
 		for (i in seq_along(rule)[!(ione|imone)]) {
-			rule[[i]] <- call("*", dargs[[i]], rule[[i]])
+			rule[[i]] <- Simplify(call("*", dargs[[i]], rule[[i]]), scache=scache)
 		}
 		for (i in seq_along(rule)[imone]) {
-			rule[[i]] <- call("-", rule[[i]])
+			rule[[i]] <- Simplify(call("-", rule[[i]]), scache=scache)
 		}
-		return(Simplify(li2sum(rule)))
+		return(Simplify(li2sum(rule), scache=scache))
 	} else if (is.function(st)) {
+#browser()
 		# differentiate its body if can get it
 		args <- as.list(st)[-1]
 		names(args)=names(formals(ff))
@@ -381,74 +422,76 @@ Deriv_ <- function(st, x, env, use.D) {
 			stop(sprintf("Could not retrieve arguments of '%s()'", stch))
 		}
 		st <- do.call("substitute", list(body(ff), args))
-		Deriv_(st, x, env, use.D)
+		Deriv_(st, x, env, use.D, dsym, scache)
 	} else {
 		stop("Invalid type of 'st' argument. It must be constant, symbol or a call.")
 	}
 }
 
-#' @rdname Deriv
+##' @rdname Deriv
 qlist <- function(...) {
-	# substitute arguments and return the list
-	mc <- match.call()
-	as.list(mc)[-1]
+   # qlist() is deprecated, kept for legacy only
+   .Deprecated("alist")
+   return()
 }
 drule <- new.env()
-dsym <- new.env()
 
 # linear functions, i.e. d(f(x))/dx == f(d(arg)/dx)
 dlin=c("+", "-", "c", "t", "sum", "cbind", "rbind")
 
-
-drule[["*"]] <- qlist(e1=e2, e2=e1)
-drule[["^"]] <- qlist(e1=e2*e1^(e2-1), e2=e1^e2*log(e1))
-drule[["/"]] <- qlist(e1=1/e2, e2=-e1/e2^2)
-drule[["sqrt"]] <- qlist(x=0.5/sqrt(x))
-drule[["log"]] <- qlist(x=1/(x*log(base)), base=-log(base, x)/(base*log(base)))
+# rule table
+# arithmetics
+drule[["*"]] <- alist(e1=e2, e2=e1)
+drule[["^"]] <- alist(e1=e2*e1^(e2-1), e2=e1^e2*log(e1))
+drule[["/"]] <- alist(e1=1/e2, e2=-e1/e2^2)
+# log, exp, sqrt
+drule[["sqrt"]] <- alist(x=0.5/sqrt(x))
+drule[["log"]] <- alist(x=1/(x*log(base)), base=-log(x, base)/(base*log(base)))
 drule[["logb"]] <- drule[["log"]]
-drule[["log2"]] <- qlist(x=1/(x*log(2)))
-drule[["log10"]] <- qlist(x=1/(x*log(10)))
-drule[["log1p"]] <- qlist(x=1/(x+1))
-drule[["exp"]] <- qlist(x=exp(x))
-drule[["expm1"]] <- qlist(x=exp(x))
+drule[["log2"]] <- alist(x=1/(x*log(2)))
+drule[["log10"]] <- alist(x=1/(x*log(10)))
+drule[["log1p"]] <- alist(x=1/(x+1))
+drule[["exp"]] <- alist(x=exp(x))
+drule[["expm1"]] <- alist(x=exp(x))
 # trigonometric
-drule[["sin"]] <- qlist(x=cos(x))
-drule[["cos"]] <- qlist(x=-sin(x))
-drule[["tan"]] <- qlist(x=1/cos(x)^2)
-drule[["asin"]] <- qlist(x=1/sqrt(1-x^2))
-drule[["acos"]] <- qlist(x=-1/sqrt(1-x^2))
-drule[["atan"]] <- qlist(x=1/(1+x^2))
-drule[["atan2"]] <- qlist(y=x/(x^2+y^2), x=-y/(x^2+y^2))
+drule[["sin"]] <- alist(x=cos(x))
+drule[["cos"]] <- alist(x=-sin(x))
+drule[["tan"]] <- alist(x=1/cos(x)^2)
+drule[["asin"]] <- alist(x=1/sqrt(1-x^2))
+drule[["acos"]] <- alist(x=-1/sqrt(1-x^2))
+drule[["atan"]] <- alist(x=1/(1+x^2))
+drule[["atan2"]] <- alist(y=x/(x^2+y^2), x=-y/(x^2+y^2))
 if (getRversion() >= "3.1.0") {
-   drule[["sinpi"]] <- qlist(x=pi*cospi(x))
-   drule[["cospi"]] <- qlist(x=-pi*sinpi(x))
-   drule[["tanpi"]] <- qlist(x=pi/cospi(x)^2)
+	drule[["sinpi"]] <- alist(x=pi*cospi(x))
+	drule[["cospi"]] <- alist(x=-pi*sinpi(x))
+	drule[["tanpi"]] <- alist(x=pi/cospi(x)^2)
 }
 # hyperbolic
-drule[["sinh"]] <- qlist(x=cosh(x))
-drule[["cosh"]] <- qlist(x=sinh(x))
-drule[["tanh"]] <- qlist(x=(1-tanh(x)^2))
-drule[["asinh"]] <- qlist(x=1/sqrt(x^2+1))
-drule[["acosh"]] <- qlist(x=1/sqrt(x^2-1))
-drule[["atanh"]] <- qlist(x=1/(1-x^2))
+drule[["sinh"]] <- alist(x=cosh(x))
+drule[["cosh"]] <- alist(x=sinh(x))
+drule[["tanh"]] <- alist(x=(1-tanh(x)^2))
+drule[["asinh"]] <- alist(x=1/sqrt(x^2+1))
+drule[["acosh"]] <- alist(x=1/sqrt(x^2-1))
+drule[["atanh"]] <- alist(x=1/(1-x^2))
 # sign depending functions
-drule[["abs"]] <- qlist(x=sign(x))
-drule[["sign"]] <- qlist(x=0)
+drule[["abs"]] <- alist(x=sign(x))
+drule[["sign"]] <- alist(x=0)
 # special functions
-drule[["besselI"]] <- qlist(x=(if (nu == 0) besselI(x, 1, expon.scaled) else 0.5*(besselI(x, nu-1, expon.scaled) + besselI(x, nu+1, expon.scaled)))-if (expon.scaled) besselI(x, nu, TRUE) else 0, nu=NULL, expon.scaled=NULL)
-drule[["besselK"]] <- qlist(x=(if (nu == 0) -besselK(x, 1, expon.scaled) else -0.5*(besselK(x, nu-1, expon.scaled) + besselK(x, nu+1, expon.scaled)))+if (expon.scaled) besselK(x, nu, TRUE) else 0)
-drule[["besselJ"]] <- qlist(x=if (nu == 0) -besselJ(x, 1) else 0.5*(besselJ(x, nu-1) - besselJ(x, nu+1)), nu=NULL)
-drule[["besselY"]] <- qlist(x=if (nu == 0) -besselY(x, 1) else 0.5*(besselY(x, nu-1) - besselY(x, nu+1)), nu=NULL)
-drule[["gamma"]] <- qlist(x=gamma(x)*digamma(x))
-drule[["lgamma"]] <- qlist(x=digamma(x))
-drule[["digamma"]] <- qlist(x=trigamma(x))
-drule[["trigamma"]] <- qlist(x=psigamma(x, 2L))
-drule[["psigamma"]] <- qlist(x=psigamma(x, deriv+1L), deriv=NULL)
-drule[["beta"]] <- qlist(a=beta(a, b)*(digamma(a)-digamma(a+b)), b=beta(a, b)*(digamma(b)-digamma(a+b)))
-drule[["lbeta"]] <- qlist(a=digamma(a)-digamma(a+b), b=digamma(b)-digamma(a+b))
+drule[["besselI"]] <- alist(x=(if (nu == 0) besselI(x, 1, expon.scaled) else 0.5*(besselI(x, nu-1, expon.scaled) + besselI(x, nu+1, expon.scaled)))-if (expon.scaled) besselI(x, nu, TRUE) else 0, nu=NULL, expon.scaled=NULL)
+drule[["besselK"]] <- alist(x=(if (nu == 0) -besselK(x, 1, expon.scaled) else -0.5*(besselK(x, nu-1, expon.scaled) + besselK(x, nu+1, expon.scaled)))+if (expon.scaled) besselK(x, nu, TRUE) else 0, nu=NULL, expon.scaled=NULL)
+drule[["besselJ"]] <- alist(x=if (nu == 0) -besselJ(x, 1) else 0.5*(besselJ(x, nu-1) - besselJ(x, nu+1)), nu=NULL)
+drule[["besselY"]] <- alist(x=if (nu == 0) -besselY(x, 1) else 0.5*(besselY(x, nu-1) - besselY(x, nu+1)), nu=NULL)
+drule[["gamma"]] <- alist(x=gamma(x)*digamma(x))
+drule[["lgamma"]] <- alist(x=digamma(x))
+drule[["digamma"]] <- alist(x=trigamma(x))
+drule[["trigamma"]] <- alist(x=psigamma(x, 2L))
+drule[["psigamma"]] <- alist(x=psigamma(x, deriv+1L), deriv=NULL)
+drule[["beta"]] <- alist(a=beta(a, b)*(digamma(a)-digamma(a+b)), b=beta(a, b)*(digamma(b)-digamma(a+b)))
+drule[["lbeta"]] <- alist(a=digamma(a)-digamma(a+b), b=digamma(b)-digamma(a+b))
 # probability densities
-drule[["dbinom"]] <- qlist(x=NULL, size=NULL, log=NULL, prob=if (size == 0) -x*(1-prob)^(x-1) else if (x == size) size*prob^(size-1) else (size-x*prob)*(x-size+1)*dbinom(x, size-1, prob)/(1-prob)^2/(if (log) dbinom(x, size, prob) else 1))
-drule[["dnorm"]] <- qlist(x=-(x-mean)/sd^2*if (log) 1 else dnorm(x, mean, sd),
+drule[["dbinom"]] <- alist(x=NULL, size=NULL, prob=if (size == 0) -x*(1-prob)^(x-1) else if (x == size) size*prob^(size-1) else (size-x*prob)*(x-size+1)*dbinom(x, size-1, prob)/(1-prob)^2/(if (log) dbinom(x, size, prob) else 1), log=NULL)
+drule[["dnorm"]] <- alist(x=-(x-mean)/sd^2*if (log) 1 else dnorm(x, mean, sd),
 	mean=(x-mean)/sd^2*if (log) 1 else dnorm(x, mean, sd),
 	sd=(((x - mean)/sd)^2 - 1)/sd * if (log) 1 else dnorm(x, mean, sd),
 	log=NULL)
+drule[["pnorm"]] <- alist(q=dnorm(q, mean, sd)*(if (lower.tail) 1 else -1)/(if (log.p) pnorm(q, mean, sd, lower.tail) else 1), mean=dnorm(q, mean, sd)*(if (lower.tail) -1 else 1)/(if (log.p) pnorm(q, mean, sd, lower.tail) else 1), sd=dnorm(q, mean, sd)*(mean-q)/sd*(if (lower.tail) 1 else -1)/(if (log.p) pnorm(q, mean, sd, lower.tail) else 1), lower.tail=NULL, log.p=NULL)
