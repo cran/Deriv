@@ -1,6 +1,6 @@
 #' @name Simplify
 #' @title Symbollic simplification of an expression or function
-#' @aliases Simplify simplifications
+#' @aliases Simplify simplifications Cache deCache
 #' @concept symbolic simplification
 # \usage{
 # Simplify(expr, env=parent.frame(), scache=new.env())
@@ -18,9 +18,17 @@
 #' @param env An environment in which a simplified function is created
 #'  if \code{expr} is a function. This argument is ignored in all other cases.
 #' @param scache An environment where there is a list in which simplified expression are cached
+#' @param st A language expression to be cached
+#' @param prefix A string to start the names of the cache variables
 #' @return A simplified expression. The result is of the same type as
 #'  \code{expr} except for formula, where a language is returned.
 #' @details An environment \code{simplifications} containing simplification rules, is exported in the namespace accessible by the user.
+#'  Cache() is used to remove redundunt calculations by storing them in
+#'  cache variables. Default parameters to Cache() does not have to be provided
+#'  by user. deCache() makes the inverse job -- a series of assignements
+#'  are replaced by only one big expression without assignement.
+#'  Sometimes it is usefull to
+#'  apply deChache() and only then pass its result to Cache().
 Simplify <- function(expr, env=parent.frame(), scache=new.env()) {
 	if (is.null(scache$l))
 		scache$l <- list() # for stand alone use of Simplify
@@ -91,7 +99,6 @@ Simplify_ <- function(expr, scache) {
 		expr
 	}
 }
-
 
 # in what follows no need to Simplify_ args neither to check if
 # all arguments are numeric. It is done in the upper Simplify_()
@@ -532,6 +539,15 @@ Simplify.bessel <- function(expr, scache=NULL) {
 	}
 	expr
 }
+`Simplify.{` <- function(expr, scache=NULL) {
+	# if the last expression is a constant just return it
+	n <- length(expr)
+	la <- expr[[n]]
+	if (is.conuloch(la)) {
+		expr <- la
+	}
+	expr
+}
 
 Numden <- function(expr) {
 	# Return a list with "num" as numerator and "den" as denominator sublists.
@@ -651,17 +667,24 @@ Lincomb <- function(expr) {
 
 # return an environement in wich stored subexpressions with
 # an index giving the position of each subexpression in the
-# whole statement st. Index is given as a string i1.i2.i3...
+# whole statement st ("rhs" entry). Index is given as a string i1.i2.i3...
 # where the integeres iN refer to st[[i2]][[i3]][[...]]
+# "lhs" is index to char mapping (what is defined where)
+# "def" is a mapping of lhs (char) to rhs (char)
+# "{" where accolade operators are
 Leaves <- function(st, ind="1", res=new.env()) {
 	if (is.null(res$rhs)) {
 		res$rhs <- list()
 		res$lhs <- list()
 		res$def <- list() # store definitions by asignments
+		res[["{"]] <- list()
 	}
 	if (is.call(st)) {
 		if (st[[1]] != as.symbol("<-") && st[[1]] != as.symbol("=")) {
 			res$rhs[[ind]] <- format1(st)
+			if (st[[1]] == as.symbol("{")) {
+				res[["{"]] <- append(res[["{"]], ind)
+			}
 		} else {
 			if (!is.null(res$lhs[[ind]]))
 				stop("Re-assignment is not supported yet in caching.")
@@ -687,7 +710,8 @@ ind2call <- function(ind, st="st")
 
 # replace repeated subexpressions by cached values
 # prefix is used to form auxiliary variable
-Cache <- function(st, env=Leaves(st), prefix="", stind="") {
+##' @rdname Simplify
+Cache <- function(st, env=Leaves(st), prefix="") {
 	stch <- if (is.call(st)) as.character(st[[1]]) else ""
 	env$lhs <- unlist(env$lhs)
 	#if (stch == "<-" || stch == "=") {
@@ -702,26 +726,26 @@ Cache <- function(st, env=Leaves(st), prefix="", stind="") {
 	}
 	ve <- unlist(env$rhs)
 	defs <- unlist(env$def)
-	# if the subexpression is in defs, replace it with the symbol in the lhs
 	tdef <- outer(ve, defs, "==")
 #browser()
-	if (ncol(tdef) > 0) {
-		for (ic in seq_len(ncol(tdef))) {
-			v <- tdef[,ic]
-			nme <- colnames(tdef)[ic]
-			for (i in which(v)) {
-				ind <- names(v)[i]
-				ve[i] <- NA
-				# skip self assignment
-				ispl <- strsplit(ind, ".", fixed=TRUE)[[1]]
-				indup <- paste(ispl[-length(ispl)], collapse=".")
-				stup <- eval(ind2call(indup))
-				if (is.assign(stup) && as.character(stup[[2]]) == nme)
-					next
-				do.call(`<-`, list(ind2call(ind), quote(as.symbol(nme))))
-			}
+	# if the subexpression is in defs, replace it with the symbol in the lhs
+	for (ic in seq_len(ncol(tdef))) {
+		v <- tdef[,ic]
+		nme <- colnames(tdef)[ic]
+		idef <- names(which(env$lhs==nme))
+		for (i in which(v)) {
+			ind <- names(v)[i] # subexpression index in st
+			# skip self assignment
+			ispl <- strsplit(ind, ".", fixed=TRUE)[[1]]
+			indup <- paste(ispl[-length(ispl)], collapse=".")
+			stup <- eval(ind2call(indup))
+			if (is.assign(stup) && (as.character(stup[[2]]) == nme || natcompare(indup, idef) < 0))
+				next
+			ve[i] <- NA
+			do.call(`<-`, list(ind2call(ind), quote(as.symbol(nme))))
 		}
 	}
+
 	suppressWarnings(ve <- ve[!is.na(ve)])
 	
 	ta <- table(ve)
@@ -771,73 +795,48 @@ Cache <- function(st, env=Leaves(st), prefix="", stind="") {
 		l <- c(as.symbol("{"), e, st)
 		st <- as.call(l)
 	} else {
-		indst <- c() # vector of char indexes after which e must be inserted in st. "1" means insret as first after `{`
-		ist="1"
-		for (aux in e) {
-			depv <- all.vars(aux[[3]])
-			# find the biggest index in st where depv are assigned
-			suppressWarnings(whst <- max(sapply(depv, function(v) max(which(v == env$lhs)))))
-			ist <- max.nat(ist, if (whst == -Inf) "1" else names(env$lhs)[whst])
-			indst <- c(indst, ist)
-		}
-		oist <- order(indst)
-		for (i in rev(oist)) {
-			ind <- indst[i]
-			if (ind == "0") {
-				stli <- as.list(st)
-				ia <- 1
-			} else {
-				ili <- gsub("\\.[0-9]+$", "", ind) # ili is the list where assihnment is iserted, ia is index in this list after which the insertion takes place
-				ia <- as.integer(substring(ind, nchar(ili)+2))
-				stcall <- ind2call(ili)
-				stli <- as.list(eval(stcall))
-			}
-			stli <- as.call(append(stli, e[[i]], after=ia))
-			do.call("<-", list(stcall, quote(stli)))
-		}
+		n <- length(st)
+		res <- c(e, as.list(st)[-c(1, n)])
+		alva <- lapply(res, all.vars)
+		i <- toporder(alva)
+		res <- c(as.symbol("{"), res[i], st[[n]])
+		st <- as.call(res)
 	}
 	return(st)
 }
-max.nat <- function(a, b, na.rm=FALSE, sep=".") {
-	# choose maximum string value among two strings a and b according
-	# to _natural ordering, i.e. here "1.10" > "1.2"
-	# Each string is splitted in a sequence of ingeter numbers using
-	# strsplit() with sep as separating element
-	# Eache element of the sequence is compared with corresponding
-	# element in the other sequence till the first max value is found
-	# if one sequence is longuer than the other with the first elements all equal,
-	# then the longuest sequence is the result
-	
-	if (na.rm) {
-		if (is.na(a))
-			return(b)
-		if (is.na(b))
-			return(a)
+
+##' @rdname Simplify
+deCache <- function(st) {
+	# do the job inverse to Cache(), i.e. substitute all auxiliary expressions
+	# in the final one
+	# NB side effect: all assignement not used in the last operation in {...} are
+	# just lost.
+	if (!is.call(st)) {
+		return(st)
 	}
-	# split the strings
-	
-	spl <- lapply(strsplit(c(a, b), sep, fixed=TRUE), as.integer)
-	len <- sapply(spl, length)
-	res <- NA
-	va <- spl[[1]]
-	vb <- spl[[2]]
-	for (i in seq_len(min(len))) {
-		if (va[i] > vb[i])
-			res <- a
-		else if (va[i] < vb[i])
-			res <- b
-		else
-			res
-	}
-	if (is.na(res)) {
-		# all equal in first elements
-		if (len[[1]] > len[[2]])
-			return(a)
-		else
-			return(b)
+	stch <- as.character(st[[1]])
+	stl <- as.list(st)
+	if (stch == "{") {
+		repl <- list()
+		for (op in stl[-1]) {
+			# gather substitutions
+			if (is.assign(op)) {
+				repl[[as.character(op[[2]])]] <- do.call("substitute", list(deCache(op[[3]]), repl))
+			}
+		}
+		# the last operation subst
+		la <- stl[[length(stl)]]
+		if (is.assign(la)) {
+			st <- repl[[length(repl)]]
+		} else {
+			st <- do.call("substitute", list(deCache(la), repl))
+		}
 	} else {
-		return(res)
+		# recurrsive call to deCache on all arguments of the statement
+		stl <- lapply(stl, deCache)
+		st <- as.call(stl)
 	}
+	return(st)
 }
 
 nd2expr <- function(nd, scache, sminus=NULL) {
@@ -935,7 +934,57 @@ li2sum <- function(li) {
 	else
 		call("+", li2sum(li[-len]), li[[len]])
 }
-
+toporder <- function(l, ind=seq_along(l), vars=sapply(l, `[[`, 1)) {
+	# Topological ordering of assignement operators
+	# l is a list whose memebers are resulted from all.vars(op)
+	# ind is a subindexing vector for l (for recursive call)
+	# vars is a vector of variable which are assigned in ops[ind]
+	# return a vector of indexes like in order()
+	
+	# find independet assignements, i.e. whose rhs vars are not in vars
+#cat("ind=", ind, "\n")
+	if (length(ind) <= 1) {
+		return(ind)
+	}
+	rhsvar <- lapply(l[ind], `[`, -1)
+	indep <- which(!sapply(rhsvar, function(v) any(v %in% vars)))
+#cat("indep=", ind[indep], "\n")
+	return(c(ind[indep], toporder(l, ind[-indep], vars[-indep])))
+}
+natcompare <- function(s1, s2, sep="[^0-9]+") {
+	# Compare two strings in natural ordering,
+	# i.e. natlower("1.12", "1.2") returns 1 (i.e s1 is greater than s2)
+	# while plain "1.12" < "1.2" returns TRUE
+	# sep is separator for string splitting
+	# By default any non number chain of characters
+	# is used as a single separator and thus is exlculed
+	# from comparison.
+	# The fields after string splitting are compared as numerics
+	# Empty string or NA are considered as -Inf, i.e. they are less
+	# than any other finite number.
+	# Return -1 if s1 is lower s2, 0 if s1 is equal to s2 and 1 otherwise
+	# 
+	v1 <- as.numeric(strsplit(s1, sep[1])[[1]])
+	v1[is.na(v1)] <- -Inf
+	v2 <- as.numeric(strsplit(s2, sep[1])[[1]])
+	v2[is.na(v2)] <- -Inf
+	l1 <- length(v1)
+	l2 <- length(v2)
+	lmin <- min(l1, l2)
+	# complete the shortest vector by -Inf
+	v1 <- c(v1, rep(-Inf, l2-lmin))
+	v2 <- c(v2, rep(-Inf, l1-lmin))
+	m1 <- v1 < v2
+	eq <- v1 == v2
+	p1 <- v1 > v2
+	if (all(m1) || (any(m1) && all(!p1)) || any(head(which(m1), 1) < head(which(p1), 1))) {
+		-1
+	} else if (all(eq)) {
+		0
+	} else {
+		1
+	}
+}
 simplifications <- new.env()
 
 assign("+", `Simplify.+`, envir=simplifications)
@@ -954,3 +1003,4 @@ assign("besselI", `Simplify.bessel`, envir=simplifications)
 assign("besselK", `Simplify.bessel`, envir=simplifications)
 assign("<-", `Simplify.=`, envir=simplifications)
 assign("=", `Simplify.=`, envir=simplifications)
+assign("{", `Simplify.{`, envir=simplifications)
