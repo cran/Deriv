@@ -1,6 +1,6 @@
 #' @name Deriv
 #' @title Symbollic differentiation of an expression or function
-#' @aliases Deriv drule qlist
+#' @aliases Deriv drule
 #' @concept symbollic differentiation
 #' 
 #' @param f An expression or function to be differentiated.
@@ -12,11 +12,17 @@
 #'   \item a language: \code{quote(x**n)}
 #'   \item a right hand side of a formula: \code{~ x**n} or \code{y ~ x**n}
 #'  }
-#' @param x An optiona character vector with variable name(s) with resptect to which
+#' @param x An optional character vector with variable name(s) with resptect to which
 #'  \code{f} must be differentiated. If not provided, x is guessed from
 #'  \code{names(formals(f))}, if \code{f} is a function, or from all variables in f
 #'  in other cases. If f is a primitive
 #'  function, x is set to \code{names(formals(args(f)))}
+#'  To differentiate expressions including components of lists or vectors, i.e. by expressions like
+#'  \code{p[1]}, \code{theta[["alpha"]]} or \code{theta$beta}, the vector of
+#'  variables \code{x}
+#'  must be a named vector. For the cited examples, \code{x} must be given
+#'  as follows \code{c(p="1", theta="alpha", theta="beta")}. Note the repeated name \code{theta} which must be provided for every component of the list \code{theta} by which a
+#'  differerentiation is required.
 #' @param env An environment where the symbols and functions are searched for.
 #'  Defaults to \code{parent.frame()} for \code{f} expression and to
 #'  \code{environment(f)} if \code{f} is a function. For primitive function,
@@ -95,8 +101,6 @@
 #' NB2. In Bessel functions, derivatives are calculated only by the first argument,
 #'      not by the \code{nu} argument which is supposed to be constant.
 #' 
-#' NB3. qlist() is deprecated. Use a standard function alist() instead.
-#'      qlist() will be removed starting from the version 3.6
 #' @author Andrew Clausen (original version) and Serguei Sokol (maintainer)
 #' @examples
 #'
@@ -158,6 +162,16 @@
 #'   Deriv(myfun(z^2, FALSE), "z")
 #'   # 2 * (z * dmyfun(z^2, FALSE))
 #' }
+#' # Differentiantion by list components
+#' \dontrun{
+#'   theta <- list(m=0.1, sd=2.)
+#'   x <- names(theta)
+#'   names(x)=rep("theta", length(theta))
+#'   Deriv(~exp(-(x-theta$m)**2/(2*theta$sd)), x, cache.exp=FALSE)
+#' # c(theta_m = exp(-((x - theta$m)^2/(2 * theta$sd))) *
+#' #  (x - theta$m)/theta$sd, theta_sd = 2 * (exp(-((x - theta$m)^2/
+#' #  (2 * theta$sd))) * (x - theta$m)^2/(2 * theta$sd)^2))
+#' }
 
 Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (is.character(f)) parse(text=f) else f), env=if (is.function(f)) environment(f) else parent.frame(), use.D=FALSE, cache.exp=TRUE) {
 	tf <- try(f, silent=TRUE)
@@ -187,10 +201,10 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		}
 		res <- Deriv_(as.call(c(as.symbol(fch), lapply(x, as.symbol))), x, env, use.D, dsym, scache)
 		if (cache.exp)
-			res <- Cache(res)
+			res <- Cache(Simplify(deCache(res), scache=scache))
 		return(as.function(c(af, res), envir=env))
 	}
-	x <- as.character(x)
+	x[] <- as.character(x)
 	if (any(nchar(x) == 0)) {
 		stop("Names in the second argument must not be empty")
 	}
@@ -198,7 +212,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		# f is to parse
 		res <- Deriv_(parse(text=f)[[1]], x, env, use.D, dsym, scache)
 		if (cache.exp)
-			res <- Cache(res)
+			res <- Cache(Simplify(deCache(res), scache=scache))
 		format1(res)
 	} else if (is.function(f)) {
 #browser()
@@ -209,7 +223,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 				acall <- as.call(c(as.symbol(fch), arg))
 				res <- Deriv_(acall, x, env, use.D, dsym, scache)
 				if (cache.exp)
-					res <- Cache(res)
+					res <- Cache(Simplify(deCache(res), scache=scache))
 				as.function(c(formals(args(f)), res), envir=env)
 			} else {
 				stop(sprintf("Internal or external function '%s()' is not in derivative table.", fch))
@@ -217,26 +231,26 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 		} else {
 			res <- Deriv_(b, x, env, use.D, dsym, scache)
 			if (cache.exp)
-				res <- Cache(res)
+				res <- Cache(Simplify(deCache(res), scache=scache))
 			as.function(c(formals(f), res), envir=env)
 		}
 	} else if (is.expression(f)) {
 		res <- Deriv_(f[[1]], x, env, use.D, dsym, scache)
 		if (cache.exp)
-			res <- Cache(res)
+			res <- Cache(Simplify(deCache(res), scache=scache))
 		as.expression(res)
 	} else if (is.language(f)) {
 		if (is.call(f) && f[[1]] == as.symbol("~")) {
 			# rhs of the formula
 			res <- Deriv_(f[[length(f)]], x, env, use.D, dsym, scache)
 			if (cache.exp)
-				res <- Cache(res)
+				res <- Cache(Simplify(deCache(res), scache=scache))
 			res
 		} else {
 			# plain call derivation
 			res <- Deriv_(f, x, env, use.D, dsym, scache)
 			if (cache.exp)
-				res <- Cache(res)
+				res <- Cache(Simplify(deCache(res), scache=scache))
 			res
 		}
 	} else {
@@ -245,7 +259,7 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 			x <- all.vars(f)
 		res <- Deriv_(f, x, env, use.D, dsym, scache)
 		if (cache.exp)
-			res <- Cache(res)
+			res <- Cache(Simplify(deCache(res), scache=scache))
 		res
 		#stop("Invalid type of 'f' for differentiation")
 	}
@@ -255,24 +269,36 @@ Deriv <- function(f, x=if (is.function(f)) names(formals(f)) else all.vars(if (i
 Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 	stch <- as.character(if (is.call(st)) st[[1]] else st)
 	# Make x scalar and wrap results in a c() call if length(x) > 1
-	if (length(x) > 1 && stch != "{") {
+	nm_x <- names(x)
+	if (!is.null(nm_x))
+		nm_x[is.na(nm_x)] <- ""
+	else
+		nm_x <- rep("", length(x))
 #browser()
+	if (length(x) > 1 && stch != "{") {
 		# many variables => recursive call on single name
-		res <- lapply(x, function(xi) Deriv_(st, xi, env, use.D, dsym, scache))
-		names(res) <- x;
+		res <- lapply(seq_along(x), function(ix) Deriv_(st, x[ix], env, use.D, dsym, scache))
+		names(res) <- if (is.null(nm_x)) x else ifelse(is.na(nm_x) | nchar(nm_x) == 0, x, paste(nm_x, x, sep="_"));
 		return(as.call(c(as.symbol("c"), res)))
 	}
 	# differentiate R statement 'st' (a call, or a symbol or numeric) by a name in 'x'
+	get_sub_x <- !(is.null(nm_x) | nchar(nm_x) == 0 | is.na(nm_x))
+	is_index_expr <- is.call(st) && any(as.character(st[[1]]) == c("$", "[", "[["))
+	is_sub_x <- is_index_expr &&
+				format1(st[[2]]) == nm_x && format1(st[[3]]) == x
 	if (is.conuloch(st)) {
 		return(0)
-	} else if (is.symbol(st)) {
-		stch <- as.character(st)
-		if (stch == x) {
+	} else if (is.symbol(st) || (get_sub_x && is_index_expr)) {
+#browser()
+		stch <- format1(st)
+		if ((stch == x && !get_sub_x) || (get_sub_x && is_sub_x)) {
 			return(1)
-		} else if (is.null(dsym$l[[x]][[stch]])) {
+		} else if ((get_sub_x && is_index_expr && !is_sub_x) ||
+				(if (get_sub_x) is.null(dsym$l[[nm_x]][[x]][[stch]]) else
+				is.null(dsym$l[[x]][[stch]]))) {
 			return(0)
 		} else {
-			return(dsym$l[[x]][[stch]])
+			return(if (get_sub_x) dsym$l[[nm_x]][[x]][[stch]] else dsym$l[[x]][[stch]])
 		}
 	} else if (is.call(st)) {
 #browser()
@@ -290,15 +316,21 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 #browser()
 			# AD differentiation (may be with many x)
 			res=list(st[[1]])
-			# initiate dsym[[xi]]
-			for (xi in x) {
-				if (is.null(dsym$l[[xi]]))
-					dsym$l[[xi]] <- list()
+			# initiate dsym[[x[ix]]] or dsym[[nm_x[ix]}}[[x[ix]]]
+			for (ix in seq_along(x)) {
+				if (get_sub_x[ix]) {
+					if (is.null(dsym$l[[nm_x[ix]]][[x[ix]]]))
+						dsym$l[[nm_x[ix]]][[x[ix]]] <- list()
+				} else {
+					if (is.null(dsym$l[[x[ix]]]))
+						dsym$l[[x[ix]]] <- list()
+				}
 			}
 			# collect defined var names (to avoid redifferentiation)
 			defs <- sapply(as.list(st)[-1], function(e) if (is.assign(e)) as.character(e[[2]]) else "")
 			alva=list()
 			for (iarg in seq_along(args)) {
+#browser()
 				a <- args[[iarg]]
 				if (is.assign(a)) {
 					if (!is.symbol(a[[2]]))
@@ -308,38 +340,54 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 					res <- append(res, a)
 					alva <- append(alva, list(all.vars(a)))
 					ach <- as.character(a[[2]])
-					for (xi in x) {
-						d_ach <- paste(".", ach, "_", xi, sep="")
+					for (ix in seq_along(x)) {
+						d_ach <- paste(".", ach, "_", x[ix], sep="")
 						d_a <- as.symbol(d_ach)
 						if (any(d_a == defs)) {
 							# already differentiated in previous calls
-							dsym$l[[xi]][[ach]] <- d_a
+							if (get_sub_x[ix])
+								dsym$l[[nm_x[ix]]][[x[ix]]][[ach]] <- d_a
+							else
+								dsym$l[[x[ix]]][[ach]] <- d_a
 							next
 						}
-						de_a <- Deriv_(a[[3]], xi, env, use.D, dsym, scache)
+						de_a <- Deriv_(a[[3]], x[ix], env, use.D, dsym, scache)
 						if (de_a == 0) {
-							next
+							if (iarg < length(args))
+								next
 						} else if (!is.call(de_a)) {
-							dsym$l[[xi]][[ach]] <- de_a
-							next
+							if (get_sub_x[ix])
+								dsym$l[[nm_x[ix]]][[x[ix]]][[ach]] <- de_a
+							else
+								dsym$l[[x[ix]]][[ach]] <- de_a
+							if (iarg < length(args))
+								next
 						}
-						dsym$l[[xi]][[ach]] <- d_a
+						if (get_sub_x[ix])
+							dsym$l[[nm_x[ix]]][[x[ix]]][[ach]] <- d_a
+						else
+							dsym$l[[x[ix]]][[ach]] <- d_a
 						res <- append(res, call("<-", d_a, de_a))
 						alva <- append(alva, list(c(d_ach, all.vars(de_a))))
 						# store it in scache too
-						scache$l[[format1(de_a)]] <- as.symbol(d_a)
+						#scache$l[[format1(de_a)]] <- as.symbol(d_a)
 					}
 				} else {
-					de_a <- lapply(x, function(xi) Deriv_(a, xi, env, use.D, dsym, scache))
+					de_a <- lapply(seq_along(x), function(ix) Deriv_(a, x[ix], env, use.D, dsym, scache))
 					if (length(x) > 1) {
-						names(de_a) <- x
+						names(de_a) <- ifelse(get_sub_x, paste(nm_x, x, sep="_"), x)
 						res <- append(res, as.call(c(as.symbol("c"), de_a)))
 					} else {
 						res <- append(res, de_a)
 					}
 				}
 			}
-			i <- toporder(alva)
+#browser()
+			if (length(alva) == length(res)) {
+				i <- toporder(alva[-length(alva)]) # the last expression must stay the last
+			} else {
+				i <- toporder(alva)
+			}
 			res[-c(1, length(res))] <- res[-c(1, length(res))][i]
 			return(Simplify(as.call(res)))
 		} else if (is.uminus(st)) {
@@ -391,11 +439,11 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 		# actualize the rule with actual arguments
 		rule <- lapply(rule, function(r) do.call("substitute", list(r, aa)))
 #browser()		
-		# which arguments have to be differentiated?
+		# which arguments can be differentiated?
 		iad <- which(!sapply(rule, is.null))
 		rule <- rule[iad]
-		lsy <- unlist(lapply(dsym$l, ls, all.names=TRUE))
-		if (!any(names(which(sapply(mc, function(it) {av <- all.vars(it); any(x == av) || any(av %in% lsy)}))) == names(rule))) {
+		lsy <- unlist(lapply(dsym$l, function(it) if (get_sub_x && is.list(it)) unlist(lapply(it, ls, all.names=TRUE)) else ls(it, all.names=TRUE)))
+		if (!any(names(which(sapply(mc, function(it) {av <- all.vars(it); (if (get_sub_x) any(nm_x == av) else any(x == av)) || any(av %in% lsy)}))) %in% names(rule))) {
 			#warning(sprintf("A call %s cannot be differentiated by the argument '%s'", format1(st), x))
 			return(0)
 		}
@@ -434,12 +482,6 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 	}
 }
 
-##' @rdname Deriv
-qlist <- function(...) {
-   # qlist() is deprecated, kept for legacy only
-   .Deprecated("alist")
-   return()
-}
 drule <- new.env()
 
 # linear functions, i.e. d(f(x))/dx == f(d(arg)/dx)
