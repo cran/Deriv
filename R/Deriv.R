@@ -395,6 +395,9 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 		} else if (stch == "(") {
 #browser()
 			return(Simplify(Deriv_(st[[2]], x, env, use.D, dsym, scache), scache=scache))
+		} else if(stch == "ifelse") {
+			return(Simplify(call("ifelse", st[[2]], Deriv_(st[[3]], x, env, use.D, dsym, scache),
+				Deriv_(st[[4]], x, env, use.D, dsym, scache)), scache=scache))
 		} else if (stch == "if") {
 			return(if (nb_args == 2)
 				Simplify(call("if", st[[2]], Deriv_(st[[3]], x, env, use.D, dsym, scache)), scache=scache) else
@@ -438,7 +441,7 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 		aa <- modifyList(da, mc) # all arguments with actual values
 		# actualize the rule with actual arguments
 		rule <- lapply(rule, function(r) do.call("substitute", list(r, aa)))
-#browser()		
+#browser()
 		# which arguments can be differentiated?
 		iad <- which(!sapply(rule, is.null))
 		rule <- rule[iad]
@@ -447,9 +450,7 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache) {
 			#warning(sprintf("A call %s cannot be differentiated by the argument '%s'", format1(st), x))
 			return(0)
 		}
-		# rules and dargs are ordered by mc names
-		rule <- rule[names(mc)]
-		dargs <- lapply(mc, Deriv_, x, env, use.D, dsym, scache)
+		dargs <- lapply(names(rule), function(nm_a) if (is.null(mc[[nm_a]])) 0 else Deriv_(mc[[nm_a]], x, env, use.D, dsym, scache))
 		ize <- sapply(dargs, `==`, 0)
 		dargs <- dargs[!ize]
 		rule <- rule[!ize]
