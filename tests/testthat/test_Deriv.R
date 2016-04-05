@@ -148,6 +148,9 @@ test_that("probability densities", {
 })
 test_that("chain rule: multiply by a const", {
    expect_equal_deriv(a*x, a)
+   expect_equal_deriv(a[1]*x, a[1])
+   expect_equal_deriv(a[[1]]*x, a[[1]])
+   expect_equal_deriv(a$b*x, a$b)
    expect_equal_deriv((a*x)**2, 2*(a^2*x))
    expect_equal_deriv((a*x)**n, a*n*(a*x)^(n-1))
    expect_equal_deriv(sin(a*x), a*cos(a*x))
@@ -198,7 +201,7 @@ test_that("composite function", {
 # user function with non diff arguments
 ifel<-ifelse
 drule[["ifel"]]<-alist(test=NULL, yes=(test)*1, no=(!test)*1)
-rm(t)
+suppressWarnings(rm(t))
 expect_equal(Deriv(~ifel(abs(t)<0.1, t**2, abs(t)), "t"), quote({
     .e2 <- abs(t) < 0.1
     (!.e2) * sign(t) + 2 * (t * .e2)
