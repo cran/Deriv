@@ -213,6 +213,10 @@
 Deriv <- function(f, x=if (is.function(f)) NULL else all.vars(if (is.character(f)) parse(text=f) else f), env=if (is.function(f)) environment(f) else parent.frame(), use.D=FALSE, cache.exp=TRUE, nderiv=NULL, combine="c") {
 	tf <- try(f, silent=TRUE)
 	fch <- deparse(substitute(f))
+	if (is.primitive(f)) {
+		# get the true function name (may be after renaming in caller env like f=cos)
+		fch=sub('^\\.Primitive\\("(.+)"\\)', "\\1", format1(f))
+	}
 	if (inherits(tf, "try-error")) {
 		f <- substitute(f)
 	}
@@ -350,6 +354,8 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 	if (length(x) > 1 && stch != "{") {
 #browser()
 		# many variables => recursive call on single name
+		# we exclude the case '{' as we put partial derivs inside of '{'
+		# so it can be well optimized by Cache()
 		res <- lapply(seq_along(x), function(ix) Deriv_(st, x[ix], env, use.D, dsym, scache, combine))
 		names(res) <- if (is.null(nm_x)) x else ifelse(is.na(nm_x) | nchar(nm_x) == 0, x, paste(nm_x, x, sep="_"));
 		return(as.call(c(as.symbol(combine), res)))
@@ -450,13 +456,13 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 #					alva <- append(alva, list(all.vars(a)))
 					if (iarg == length(args)) {
 						names(last_res) <- ifelse(get_sub_x, paste(nm_x, x, sep="_"), x)
-						res <- append(res, as.call(c(as.symbol("c"), last_res)))
+						res <- append(res, as.call(c(as.symbol(combine), last_res)))
 					}
 				} else {
 					de_a <- lapply(seq_along(x), function(ix) Deriv_(a, x[ix], env, use.D, dsym, scache))
 					if (length(x) > 1) {
 						names(de_a) <- ifelse(get_sub_x, paste(nm_x, x, sep="_"), x)
-						res <- append(res, as.call(c(as.symbol("c"), de_a)))
+						res <- append(res, as.call(c(as.symbol(combine), de_a)))
 					} else {
 						res <- append(res, de_a)
 					}
