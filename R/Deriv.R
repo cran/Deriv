@@ -433,7 +433,7 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 							dsym$l[[nm_x[ix]]][[x[ix]]][[ach]] <- de_a
 						else
 							dsym$l[[x[ix]]][[ach]] <- de_a
-						if (de_a == 0) {
+						if (identical(de_a, 0)) {
 							if (iarg < length(args))
 								next
 						} else if (!is.call(de_a)) {
@@ -504,7 +504,7 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 			# no derivative rule for this function
 			# see if its arguments depend on x. If not, just send 0
 			dargs <- lapply(args, Deriv_, x, env, use.D, dsym, scache)
-			if (all(sapply(dargs, is.numeric)) && all(dargs == 0)) {
+			if (all(sapply(dargs, identical, 0))) {
 				return(0)
 			}
 			# otherwise try to get the body and differentiate it
@@ -550,7 +550,7 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 			return(0)
 		}
 		dargs <- lapply(names(rule), function(nm_a) if (is.null(mc[[nm_a]])) 0 else Deriv_(mc[[nm_a]], x, env, use.D, dsym, scache))
-		ize <- sapply(dargs, `==`, 0)
+		ize <- sapply(dargs, identical, 0)
 		dargs <- dargs[!ize]
 		rule <- rule[!ize]
 		if (length(rule) == 0) {
@@ -558,8 +558,8 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c") {
 		}
 		
 		# apply chain rule where needed
-		ione <- sapply(dargs, `==`, 1)
-		imone <- sapply(dargs, `==`, -1)
+		ione <- sapply(dargs, identical, 1)
+		imone <- sapply(dargs, identical, -1)
 		for (i in seq_along(rule)[!(ione|imone)]) {
 			rule[[i]] <- Simplify(call("*", dargs[[i]], rule[[i]]), scache=scache)
 		}
