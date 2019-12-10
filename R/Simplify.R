@@ -86,10 +86,21 @@ Simplify_ <- function(expr, scache) {
 				return(res)
 			}
 		}
+		che1 <- as.character(expr[[1L]])
+		if (che1 == "arg_missing" || ((che1 == "::" || che1 == ":::") && as.character(expr[[2L]]) == "Deriv" && as.character(expr[[3L]][[1L]]) == "arg_missing")) {
+			res <- eval(expr)
+			scache$l[[che]] <- res
+			return(res)
+		}
 		scache$l[[che]] <- NA # token holder
 #cat("simp expr=", format1(expr), "\n", sep="")
+		# skip missing unnamed args
+		imi <- sapply(expr, function(it) identical(nchar(it), 0L))
+		if (any(imi) && length(nms <- names(expr)) > 0L)
+			imi <- imi & sapply(nms, function(it) identical(nchar(it), 0L))
+		expr <- as.call(as.list(expr)[!imi])
 		args <- lapply(as.list(expr)[-1], Simplify_, scache)
-		expr[-1]=args
+		expr[-1] <- args
 		if (all(sapply(args, is.conuloch))) {
 			# if all arguments are like numeric, evaluate them
 			res <- eval(expr)
@@ -559,7 +570,86 @@ Simplify.bessel <- function(expr, scache=NULL) {
 	}
 	expr
 }
-
+`Simplify.%*%` <- function(expr, scache=NULL)
+{
+	a <- expr[[2]]
+	b <- expr[[3]]
+	if (identical(a, 0) || identical(a, 0L) || identical(b, 0) || identical(b, 0L))
+		return(0)
+	if (identical(a, 1) || identical(a, 1L)) {
+		return(b)
+	} else if (identical(b, 1) || identical(b, 1L)) {
+		return(a)
+	} else {
+		expr
+	}
+}
+`Simplify.$` <- function(expr, scache=NULL)
+{
+#browser()
+	# list(a=smth, b=...)$a -> smth
+	a <- expr[[2]]
+	if (identical(a, 0) || identical(a, 0L))
+		return(a)
+	b <- expr[[3]]
+	bch <- as.character(b)
+	if (((is.call(a) && "list" == as.character(a[[1]])) || is.list(a)) && is.name(b) && !is.na(i <- pmatch(bch, names(a)))) {
+		return(a[[i]])
+	}
+	expr
+}
+`Simplify.[` <- function(expr, scache=NULL)
+{
+#browser()
+	# 0[smth] -> 0
+	a <- expr[[2]]
+	if (identical(a, 0) || identical(a, 0L))
+		return(a)
+	expr
+}
+`Simplify.[[` <- function(expr, scache=NULL)
+{
+#browser()
+	# list(a=smth, b=...)$a -> smth
+	a <- expr[[2]]
+	if (identical(a, 0) || identical(a, 0L))
+		return(a)
+	b <- expr[[3]]
+	if (((is.call(a) && ((ach <- as.character(a[[1]])) == "list" || ach == "c")) || is.vector(a)) && length(b) == 1 && is.character(b) && !is.na(i <- match(b, names(a)))) {
+		return(a[[i]])
+	}
+	expr
+}
+`Simplify.||` <- function(expr, scache=NULL)
+{
+#browser()
+	# a || TRUE -> TRUE
+	# a || FALSE -> a
+	a <- expr[[2L]]
+	b <- expr[[3L]]
+	if (identical(a, TRUE) || identical(b, TRUE))
+		return(TRUE)
+	if (identical(a, FALSE))
+		return(b)
+	if (identical(b, FALSE))
+		return(a)
+	expr
+}
+`Simplify.&&` <- function(expr, scache=NULL)
+{
+#browser()
+	# a && TRUE -> a
+	# a && FALSE -> FALSE
+	a <- expr[[2L]]
+	b <- expr[[3L]]
+	if (identical(a, FALSE) || identical(b, FALSE))
+		return(FALSE)
+	if (identical(a, TRUE))
+		return(b)
+	if (identical(b, TRUE))
+		return(a)
+	expr
+}
 Numden <- function(expr) {
 	# Return a list with "num" as numerator and "den" as denominator sublists.
 	# "fa" field is for numeric factors in "num" and "den" subfields.
@@ -1030,3 +1120,8 @@ assign("besselK", `Simplify.bessel`, envir=simplifications)
 #assign("<-", `Simplify.=`, envir=simplifications)
 #assign("=", `Simplify.=`, envir=simplifications)
 assign("{", `Simplify.{`, envir=simplifications)
+assign("%*%", `Simplify.%*%`, envir=simplifications)
+assign("$", `Simplify.$`, envir=simplifications)
+assign("[[", `Simplify.[[`, envir=simplifications)
+assign("||", `Simplify.||`, envir=simplifications)
+assign("&&", `Simplify.&&`, envir=simplifications)
