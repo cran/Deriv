@@ -15,7 +15,7 @@
 #'  }
 #' @param x An optional character vector with variable name(s) with respect to which
 #'  \code{f} must be differentiated. If not provided (i.e. x=NULL), x is
-#'  guessed either from\ code{names(formals(f))} (if \code{f} is a function)
+#'  guessed either from \code{names(formals(f))} (if \code{f} is a function)
 #'  or from all variables in f in other cases.
 #'  To differentiate expressions including components of lists or vectors, i.e. by expressions like
 #'  \code{p[1]}, \code{theta[["alpha"]]} or \code{theta$beta}, the vector of
@@ -150,12 +150,13 @@
 #'      appear in \code{FUN}s arguments (cf. GMM example).
 #'
 #' NB5. Expressions are differentiated as scalar ones. However in some cases, obtained result
-#'      remains valid if variable of differentiation is a vector. This is a coincidence.
-#'      If you need to differentiate by vectors, you have to write your own differentiation rule.
+#'      remains valid if the variable of differentiation is a vector. This is just a coincidence.
+#'      If you need to differentiate by vectors, you can try to write your own differentiation rule.
 #'      For example, derivative of \code{sum(x)} where \code{x} is a vector can be done as:
 #'      \code{vsum=function(x) sum(x)}
-#'      \code{drule[["vsum"]] <- alist(x=rep_len(1, length(x)))}
-#'      \code{Deriv(~vsum(x), "x", drule=drule)}
+#'      \code{drule[["vsum"]] <- alist(x=rep_len(1, length(x)))} # drule is exported from Deriv namespace
+#'      \code{Deriv(~vsum(a*x), "x", drule=drule)}
+#'      \code{# a * rep_len(1, length(a * x))}
 #'
 #' @author Andrew Clausen (original version) and Serguei Sokol (actual version and maintainer)
 #' @examples
@@ -258,7 +259,7 @@
 
 Deriv <- function(f, x=if (is.function(f)) NULL else all.vars(if (is.character(f)) parse(text=f) else f), env=if (is.function(f)) environment(f) else parent.frame(), use.D=FALSE, cache.exp=TRUE, nderiv=NULL, combine="c", drule=Deriv::drule) {
 	tf <- try(f, silent=TRUE)
-	fch <- deparse(substitute(f))
+	fch <- deparse1(substitute(f))
 	if (is.null(f))
 		return(NULL)
 	if (is.primitive(f)) {
@@ -571,6 +572,8 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c", drule.=Deriv::d
 					Deriv_(st[[4]], x, env, use.D, dsym, scache, drule.=drule.)), scache=scache))
 		}
 		rule <- drule.[[stch]]
+		if (is.null(rule) && !identical(drule., Deriv::drule))
+			rule <- Deriv::drule[[stch]] # complete by the classic table
 		if (is.null(rule)) {
 #browser()
 			# no derivative rule for this function
@@ -623,6 +626,9 @@ Deriv_ <- function(st, x, env, use.D, dsym, scache, combine="c", drule.=Deriv::d
 		}
 #browser()
 		rule$`_missing`=NULL
+		# deCache rule expressions
+		rule <- lapply(rule, deCache)
+		
 		# actualize the rule with actual arguments
 		rule <- lapply(rule, function(r) do.call("substitute", list(r, aa)))
 		# which arguments can be differentiated?
@@ -739,7 +745,7 @@ drule[["psigamma"]] <- alist(x=psigamma(x, deriv+1L), deriv=NULL)
 drule[["beta"]] <- alist(a=beta(a, b)*(digamma(a)-digamma(a+b)), b=beta(a, b)*(digamma(b)-digamma(a+b)))
 drule[["lbeta"]] <- alist(a=digamma(a)-digamma(a+b), b=digamma(b)-digamma(a+b))
 # probability densities
-drule[["dbinom"]] <- alist(x=NULL, size=NULL, prob=if (size == 0) -x*(1-prob)^(x-1) else if (x == size) size*prob^(size-1) else (size-x*prob)*(x-size+1)*dbinom(x, size-1, prob)/(1-prob)^2/(if (log) dbinom(x, size, prob) else 1), log=NULL)
+drule[["dbinom"]] <- alist(x=NULL, size=NULL, prob=ifelse(x == 0, -size*(1-prob)^(size-1), ifelse (x == size, size*prob^(size-1), dbinom(x, size, prob)*(x-prob*size)/(prob-prob*prob)))/(if (log) dbinom(x, size, prob, log=FALSE) else 1))
 drule[["dnorm"]] <- alist(x=-(x-mean)/sd^2*(if (log) 1 else dnorm(x, mean, sd)),
 	mean=(x-mean)/sd^2*(if (log) 1 else dnorm(x, mean, sd)),
 	sd=(((x - mean)/sd)^2 - 1)/sd * (if (log) 1 else dnorm(x, mean, sd)),

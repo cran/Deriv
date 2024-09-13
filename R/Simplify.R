@@ -207,20 +207,25 @@ Simplify_ <- function(expr, scache) {
 	ota <- order(taa, decreasing=TRUE)
 	ntan <- length(ta$num)
 	fnd <- NA
+#browser()
 	for (i in ota) {
 		cnd <- if (i > ntan) "den" else "num"
 		ita <- i - if (i > ntan) ntan else 0
 		ib <- bch[[cnd]] == names(ta[[cnd]])[ita]
-		if (any(sapply(po[[cnd]][ib], is.numeric))) {
+		pisnum=any(sapply(po[[cnd]][ib], is.numeric));
+		if (pisnum || (idup <- anyDuplicated(sapply(po[[cnd]][ib], format1)))) {
 			fnd <- cnd
 			iit <- which(ib) # the bases equal to factor
-			p_fa <- min(sapply(po[[cnd]][ib], function(p) if (is.numeric(p)) p else NA), na.rm=TRUE)
+			if (pisnum) {
+				p_fa <- min(sapply(po[[cnd]][ib], function(p) if (is.numeric(p)) p else NA), na.rm=TRUE)
+			} else {
+				p_fa <- po[[cnd]][ib][[idup]]
+			}
 			i_lc <- ilc[[cnd]][iit]
 			i_nd <- ind[[cnd]][iit]
 			break
 		}
 	}
-#browser()
 	if (is.na(fnd))
 		return(lc2expr(lc, scache)) # nothing to factorize, just order terms
 	ond <- if (fnd == "num") "den" else "num"
@@ -231,9 +236,8 @@ Simplify_ <- function(expr, scache) {
 	fa_nd[[fnd]]$b <- lc[[i_lc[1]]][[fnd]]$b[i_nd[1]]
 	fa_nd[[fnd]]$p <- list(p_fa)
 	# decrease p in the lc terms
-	for (i in seq_along(i_lc)) {
+	for (i in seq_along(i_lc))
 		lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]] <- Simplify_(call("-", lc[[i_lc[i]]][[fnd]]$p[[i_nd[i]]], p_fa), scache)
-	}
 	
 	for (cnd in c(fnd, ond)) {
 		# see if other side can provide factors
@@ -661,6 +665,23 @@ Simplify.bessel <- function(expr, scache=NULL) {
 		return(b)
 	if (identical(b, TRUE))
 		return(a)
+	expr
+}
+`Simplify.ifelse` <- function(expr, scache=NULL)
+{
+#browser()
+	# ifelse(TRUE, a, b) -> a
+	# ifelse(FALSE, a, b) -> b
+	n=length(expr)
+	if (n > 1L) {
+		cond=expr[[2L]]
+	} else {
+		return(expr)
+	}
+	if (isTRUE(cond) && n > 2)
+		return(expr[[3L]])
+	if (isFALSE(cond) && n > 3)
+		return(expr[[4L]])
 	expr
 }
 Numden <- function(expr) {
@@ -1145,3 +1166,4 @@ assign("[", `Simplify.[`, envir=simplifications)
 assign("[[", `Simplify.[[`, envir=simplifications)
 assign("||", `Simplify.||`, envir=simplifications)
 assign("&&", `Simplify.&&`, envir=simplifications)
+assign("ifelse", `Simplify.ifelse`, envir=simplifications)
