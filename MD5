@@ -1,9 +1,9 @@
-f19fa29577887e052c021c1e3adc576e *DESCRIPTION
+1afc85c6ab381e006d4c90ce8d7783fd *DESCRIPTION
 eea3ca89e6c52e61bdd980c0ee071fe1 *NAMESPACE
-4b8b2228596e2314c054441843795903 *NEWS.md
+08a7b24278aaf104cadf6578e5c8cdcb *NEWS.md
 a7c0091f7dbc35c5c286aaade9cd6939 *R/Deriv.R
 8806799faaef03dbda39659c3869fc71 *R/RcppExports.R
-fce24c3833105e2adb27ce1abbf2369c *R/Simplify.R
+88f94f828262bb5e28d0cd64ff724080 *R/Simplify.R
 27d0698e72c3b4f397b0914beb12c1bc *README.md
 83ae13da0bf4e8e3834479f3f25af141 *cleanup
 2eec46fdfb9ac669825309c21c02a3a2 *inst/CITATION
@@ -14,7 +14,8 @@ fce24c3833105e2adb27ce1abbf2369c *R/Simplify.R
 acf932dbe196f9af9fc6ab6c7faf52bb *man/Simplify_cpp.Rd
 a54af14656eb4e532d695d0faca6e330 *man/format1.Rd
 7d631079968f08834e587e90e4973a1c *src/RcppExports.cpp
-794a253860b2c0cff4163249ea40b586 *src/derive_simplif.cpp
+c78f59b10a986c5d159fc5d4c41e7cd3 *src/derive_simplif.cpp
 1dd3c53a683b40b3ed62abc2ed98af20 *tests/testthat.R
 191f6c3dc58aefe2bf00b8b3ed5013ac *tests/testthat/test_Deriv.R
 a2fb1d0b7bcb6ee96f3f748bbe515a98 *tests/testthat/test_Simplify.R
+15bab45109cdaae88ebc66a4025a08c7 *tests/testthat/test_cpp.R
