@@ -1,6 +1,14 @@
 Logs for the Deriv package
 ==========================
 
+Version 4.3.6
+-------------
+
+2026-10-21
+
+- fixed issues #34 in Simplify()
+- fixed deriv of function call which is not a symbol (returning 0)
+
 Version 4.3.5
 -------------
 
